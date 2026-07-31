@@ -30,7 +30,7 @@ function VerificationBadge({ status }: { status: VerificationStatus | null }) {
 }
 
 export default function DeviceStatus() {
-  const { state } = useSerial();
+  const { state, reconnect } = useSerial();
 
   // Reconnecting is distinct from disconnected: a timed period is still
   // running on the board, so the identity shown here stays valid.
@@ -40,6 +40,16 @@ export default function DeviceStatus() {
         <span className="h-2 w-2 animate-pulse rounded-full bg-yellow-400" />
         Reconnecting{state.deviceId ? ` to ${state.deviceId}` : ''}…
         <span className="text-gray-500">board still running</span>
+        {/* Reachable from the match screen: on platforms that forget the port
+            grant this is the only way back, and the match must not be left. */}
+        {state.needsUserGesture && (
+          <button
+            onClick={() => void reconnect()}
+            className="rounded-md bg-yellow-600 px-2 py-0.5 text-xs font-semibold text-white transition hover:bg-yellow-500"
+          >
+            Reconnect
+          </button>
+        )}
       </span>
     );
   }

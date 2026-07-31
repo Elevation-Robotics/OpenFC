@@ -6,24 +6,42 @@ import { useSerial } from './SerialProvider';
 import { isWebSerialSupported } from '@/lib/serial';
 
 export default function ConnectButton() {
-  const { state, connect, disconnect } = useSerial();
+  const { state, connect, reconnect, disconnect } = useSerial();
   const supported = isWebSerialSupported();
 
   // The board keeps running while the link is down, so this is a transient
   // notice with a way out, not a return to the disconnected state.
   if (state.reconnecting) {
     return (
-      <div className="flex items-center gap-3">
-        <span className="inline-flex items-center gap-2 rounded-full bg-yellow-900/40 px-3 py-1 text-sm text-yellow-200">
-          <span className="h-3 w-3 animate-spin rounded-full border-2 border-yellow-300/40 border-t-yellow-300" />
-          Reconnecting…
-        </span>
-        <button
-          onClick={() => void disconnect()}
-          className="rounded-md border border-gray-600 px-3 py-1.5 text-sm text-gray-200 transition hover:bg-gray-800"
-        >
-          Cancel
-        </button>
+      <div className="flex flex-col items-start gap-1">
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center gap-2 rounded-full bg-yellow-900/40 px-3 py-1 text-sm text-yellow-200">
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-yellow-300/40 border-t-yellow-300" />
+            Reconnecting…
+          </span>
+          {/* Some platforms drop the port grant on unplug and cannot restore it
+              without a click; the retries keep running behind this button. */}
+          {state.needsUserGesture && (
+            <button
+              onClick={() => void reconnect()}
+              className="rounded-md bg-yellow-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-yellow-500"
+            >
+              Reconnect
+            </button>
+          )}
+          <button
+            onClick={() => void disconnect()}
+            className="rounded-md border border-gray-600 px-3 py-1.5 text-sm text-gray-200 transition hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+        </div>
+        {state.needsUserGesture && (
+          <span className="text-xs text-gray-400">
+            Your browser forgot this port. Click Reconnect and pick the board
+            again — the match keeps running.
+          </span>
+        )}
       </div>
     );
   }

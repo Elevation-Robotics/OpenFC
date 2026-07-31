@@ -53,6 +53,11 @@ export interface SerialState {
   reconnecting: boolean;
   /** Number of the reconnect attempt in flight, for UI feedback. */
   reconnectAttempt: number;
+  /**
+   * Retrying cannot restore the link on its own — the browser forgot the port
+   * grant and only a click can bring it back. Automatic retries continue.
+   */
+  needsUserGesture: boolean;
   boardState: BoardState | null;
   /** Raw set_pin diagnostics own the outputs, so boardState is not authoritative. */
   diag: boolean;
@@ -72,6 +77,7 @@ const initialState: SerialState = {
   proto: null,
   reconnecting: false,
   reconnectAttempt: 0,
+  needsUserGesture: false,
   boardState: null,
   diag: false,
   timedPeriod: { active: false, mode: null, durationMs: 0, remainingMs: 0 },
@@ -85,6 +91,7 @@ type Action =
   | { type: 'DISCONNECTED' }
   | { type: 'LINK_LOST' }
   | { type: 'RECONNECTING'; attempt: number }
+  | { type: 'NEEDS_USER_GESTURE' }
   | { type: 'ERROR'; message: string }
   | { type: 'EVENT'; event: OpenFCEvent }
   | { type: 'VERIFICATION'; status: VerificationStatus };
@@ -101,6 +108,7 @@ function reducer(state: SerialState, action: Action): SerialState {
         error: null,
         reconnecting: false,
         reconnectAttempt: 0,
+        needsUserGesture: false,
       };
     case 'DISCONNECTED':
       return { ...initialState };
@@ -108,9 +116,17 @@ function reducer(state: SerialState, action: Action): SerialState {
     // disconnect), so identity and last-known board state are deliberately
     // retained — the match UI must not blank out mid-match.
     case 'LINK_LOST':
-      return { ...state, connected: false, connecting: false, reconnecting: true };
+      return {
+        ...state,
+        connected: false,
+        connecting: false,
+        reconnecting: true,
+        needsUserGesture: false,
+      };
     case 'RECONNECTING':
       return { ...state, reconnecting: true, reconnectAttempt: action.attempt };
+    case 'NEEDS_USER_GESTURE':
+      return { ...state, needsUserGesture: true };
     case 'ERROR':
       return { ...state, connecting: false, error: action.message };
     case 'VERIFICATION':
@@ -175,6 +191,11 @@ function applyEvent(state: SerialState, evt: OpenFCEvent): SerialState {
 export interface SerialContextValue {
   state: SerialState;
   connect: () => Promise<void>;
+  /**
+   * Re-grant a forgotten port from a user gesture, keeping the current session
+   * (and the match UI) alive. Only meaningful while `needsUserGesture` is set.
+   */
+  reconnect: () => Promise<void>;
   disconnect: () => Promise<void>;
   send: (line: string) => Promise<void>;
   subscribe: (fn: (event: OpenFCEvent) => void) => () => void;
@@ -220,6 +241,7 @@ export function SerialProvider({ children }: { children: React.ReactNode }) {
       onDisconnect: (willRetry) =>
         dispatch({ type: willRetry ? 'LINK_LOST' : 'DISCONNECTED' }),
       onReconnecting: (attempt) => dispatch({ type: 'RECONNECTING', attempt }),
+      onNeedsUserGesture: () => dispatch({ type: 'NEEDS_USER_GESTURE' }),
       onReconnected: () => {
         dispatch({ type: 'CONNECTED' });
         resync(connection);
@@ -246,6 +268,25 @@ export function SerialProvider({ children }: { children: React.ReactNode }) {
       );
     }
   }, [buildConnection, resync]);
+
+  // Falls back to a fresh connect() when there is no session to resume, so the
+  // same control works whether or not a drop is being retried. Cancelling the
+  // picker leaves the reconnect state untouched: the retries are still running.
+  const reconnect = useCallback(async () => {
+    const connection = connectionRef.current;
+    if (!connection) {
+      await connect();
+      return;
+    }
+    try {
+      await connection.reconnectWithPrompt();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to reconnect.';
+      if (!/NotFoundError|No port selected|cancel/i.test(message)) {
+        dispatch({ type: 'ERROR', message });
+      }
+    }
+  }, [connect]);
 
   const disconnect = useCallback(async () => {
     await connectionRef.current?.disconnect();
@@ -313,8 +354,8 @@ export function SerialProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo<SerialContextValue>(
-    () => ({ state, connect, disconnect, send, subscribe, getConnection }),
-    [state, connect, disconnect, send, subscribe, getConnection],
+    () => ({ state, connect, reconnect, disconnect, send, subscribe, getConnection }),
+    [state, connect, reconnect, disconnect, send, subscribe, getConnection],
   );
 
   return <SerialContext.Provider value={value}>{children}</SerialContext.Provider>;

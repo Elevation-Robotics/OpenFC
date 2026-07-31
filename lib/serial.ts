@@ -5,7 +5,9 @@
 // (start_period suspends the comms watchdog), so a dropped cable mid-match must
 // not end the match — the host just needs to find its way back and resync. The
 // port is therefore kept and reopened automatically, and the match UI stays live
-// throughout.
+// throughout. Where the browser cannot re-identify the device and drops the
+// grant entirely, retrying is futile and the operator is offered a one-click
+// re-grant instead (onNeedsUserGesture / reconnectWithPrompt).
 //
 // Hardware constraint: on the CH340 the auto-reset circuit drives EN/IO0 from
 // DTR+RTS, and asserting RTS *without* DTR reboots the board — which mid-match
@@ -23,6 +25,17 @@ export const BAUD_RATE = 115200;
  * reject, and a hung teardown stalls the whole reconnect loop.
  */
 const TEARDOWN_TIMEOUT_MS = 750;
+
+/**
+ * Failed attempts that found *no* granted port before the operator is offered a
+ * manual re-grant. Chrome only remembers a port grant when it can re-identify
+ * the device; the CH340C carries no USB serial number, so on macOS the grant is
+ * dropped on unplug and getPorts() stays empty forever. requestPort() is the
+ * only way back and it needs a user gesture, so the loop alone cannot recover.
+ * Retries continue underneath — on platforms that do remember the grant (COM
+ * numbers on Windows) the link still heals with no interaction.
+ */
+const MANUAL_PROMPT_AFTER_ATTEMPTS = 4;
 
 /** Backoff before reconnect attempt N (1-based), capped so a match resyncs fast. */
 export function reconnectDelayMs(attempt: number): number {
@@ -75,6 +88,11 @@ export interface SerialHandlers {
   onDisconnect: (willRetry: boolean) => void;
   /** A reconnect attempt is pending; `attempt` is 1-based. */
   onReconnecting?: (attempt: number) => void;
+  /**
+   * Automatic reconnection cannot succeed: the browser has forgotten the port
+   * grant, and only a user gesture can restore it. Retries keep running.
+   */
+  onNeedsUserGesture?: () => void;
   /** Link re-established; the caller should resync board state. */
   onReconnected?: () => void;
 }
@@ -101,6 +119,10 @@ export class SerialConnection {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
   private reconnecting = false;
+  /** Consecutive reconnect attempts that found no granted port at all. */
+  private emptyAttempts = 0;
+  /** onNeedsUserGesture is a one-shot per drop, not a per-attempt event. */
+  private promptedForGesture = false;
   /** Guards against a native `connect` event racing a backoff tick. */
   private attemptInFlight = false;
   /** Suppresses retries while esptool owns the port during a flash. */
@@ -135,6 +157,25 @@ export class SerialConnection {
     }
   }
 
+  /**
+   * Re-grant a forgotten port from a user gesture and resume the *same* session.
+   * Unlike connect(), this keeps the existing connection object — and therefore
+   * the match UI's board identity and running timer — intact, and reports
+   * success through onReconnected so the caller resyncs as it would after any
+   * other reconnect. Must be called directly from a click handler.
+   */
+  async reconnectWithPrompt(): Promise<void> {
+    if (!isWebSerialSupported()) {
+      throw new Error('Web Serial API is not available in this browser.');
+    }
+    const port = await navigator.serial.requestPort();
+    this.cancelRetry();
+    await this.releaseLocks();
+    await settle(() => port.close(), TEARDOWN_TIMEOUT_MS);
+    await this.openAndRead(port);
+    this.handlers.onReconnected?.();
+  }
+
   private async openAndRead(port: SerialPort): Promise<void> {
     // No flowControl: 'hardware' — see the DTR/RTS note at the top of the file.
     await port.open({ baudRate: BAUD_RATE });
@@ -142,6 +183,8 @@ export class SerialConnection {
     this.intentionalClose = false;
     this.retryAttempt = 0;
     this.reconnecting = false;
+    this.emptyAttempts = 0;
+    this.promptedForGesture = false;
     this.startReadLoop();
   }
 
@@ -320,6 +363,19 @@ export class SerialConnection {
         }
         this.handlers.onReconnected?.();
         return;
+      }
+
+      // No candidate at all means the grant itself is gone, which retrying
+      // cannot undo. Having candidates that merely fail to open is transient
+      // (device still enumerating, briefly busy) and must not trip the prompt.
+      if (candidates.length === 0) {
+        this.emptyAttempts += 1;
+        if (this.emptyAttempts >= MANUAL_PROMPT_AFTER_ATTEMPTS && !this.promptedForGesture) {
+          this.promptedForGesture = true;
+          this.handlers.onNeedsUserGesture?.();
+        }
+      } else {
+        this.emptyAttempts = 0;
       }
       this.scheduleRetry();
     } catch {
