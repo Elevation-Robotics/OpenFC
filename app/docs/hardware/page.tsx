@@ -1,8 +1,57 @@
 import type { Metadata } from 'next';
 import DocsLayout, { Note, Section, T, Table } from '@/components/docs/DocsLayout';
+import { REPO_URL } from '@/lib/site';
 
 // Hardware reference. Pin map and constants mirror firmware/src/openfc_pins.h,
 // which is the normative source.
+
+// Published design files, served from public/hardware/. Sizes are stated so a
+// visitor knows what a download costs before starting one; the 3D model and
+// outline are zipped because both are large plain-text formats.
+const HARDWARE_FILES = [
+  {
+    href: '/hardware/openfc-v1-gerbers.zip',
+    label: 'Gerbers and drill files',
+    format: 'RS-274X + Excellon, zip',
+    size: '98 KB',
+  },
+  {
+    href: '/hardware/openfc-v1-schematic.pdf',
+    label: 'Schematic',
+    format: 'PDF',
+    size: '308 KB',
+  },
+  {
+    href: '/hardware/openfc-v1-bom.xlsx',
+    label: 'Bill of materials',
+    format: 'XLSX',
+    size: '9 KB',
+  },
+  {
+    href: '/hardware/openfc-v1-pick-and-place.xlsx',
+    label: 'Pick and place',
+    format: 'XLSX',
+    size: '11 KB',
+  },
+  {
+    href: '/hardware/openfc-v1-3d-step.zip',
+    label: '3D model',
+    format: 'STEP, zip',
+    size: '2.6 MB',
+  },
+  {
+    href: '/hardware/openfc-v1-outline-dxf.zip',
+    label: 'Board outline',
+    format: 'DXF, zip',
+    size: '220 KB',
+  },
+  {
+    href: '/hardware/openfc-v1-easyeda-project.eprj2',
+    label: 'EasyEDA Pro project',
+    format: 'EPRJ2',
+    size: '1.3 MB',
+  },
+];
 
 export const metadata: Metadata = {
   title: 'Hardware — OpenFC',
@@ -129,27 +178,59 @@ export default function HardwareDocs() {
 
       <Section id="files" title="Design files">
         <p>
-          The schematic, PCB layout, gerbers and bill of materials are published
-          alongside the firmware in the project repository.
+          The full design is published under <T>CERN-OHL-P-2.0</T> — free to
+          manufacture, modify and sell. See the{' '}
+          <a href="/docs/license" className="text-blue-400 hover:underline">
+            license
+          </a>
+          . The board was drawn in EasyEDA Pro; the gerbers below are what the
+          fabricator needs and are readable by any CAM tool.
         </p>
+        <Table
+          head={['File', 'Format', 'Size']}
+          rows={HARDWARE_FILES.map((f) => [
+            <a
+              key={f.href}
+              href={f.href}
+              download
+              className="text-blue-400 hover:underline"
+            >
+              {f.label}
+            </a>,
+            <T key={`${f.href}-f`}>{f.format}</T>,
+            f.size,
+          ])}
+        />
         <p>
+          Fabrication was ordered from the gerber archive as-is: 4 layers, 1.6 mm
+          FR-4, 1 oz copper, HASL. The pick-and-place and BOM files are formatted
+          for JLCPCB assembly.
+        </p>
+        <Note>
+          The <T>.eprj2</T> project file only opens in EasyEDA Pro. Everything
+          needed to build the board without it — gerbers, drills, BOM,
+          placement, outline and 3D model — is listed above.
+        </Note>
+        <p>
+          Sources are versioned alongside the firmware at{' '}
           <a
-            href="https://github.com/elevationrobotics/openfc"
+            href={REPO_URL}
             target="_blank"
             rel="noreferrer"
             className="text-blue-400 hover:underline"
           >
-            github.com/elevationrobotics/openfc
+            {REPO_URL.replace('https://', '')}
           </a>
+          .
         </p>
       </Section>
 
       <Section id="disclaimer" title="Not VEX hardware">
         <p>
-          OpenFC is an independent open-source project. It is not manufactured,
-          endorsed or approved by VEX Robotics or the RECF, and it is not a
-          substitute for official field control at a sanctioned event. It is
-          built for practice and scrimmages.
+          OpenFC is an independent open-source project of Elevation Robotics. It
+          is not manufactured, endorsed, approved or sponsored by VEX Robotics
+          or the REC Foundation, and is not affiliated with either. Those names
+          appear here only to describe what the board is compatible with.
         </p>
       </Section>
     </DocsLayout>
