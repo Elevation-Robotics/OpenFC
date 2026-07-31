@@ -17,11 +17,38 @@ import { OpenFCEvent, parseEvent } from './openfc-protocol';
 
 export const BAUD_RATE = 115200;
 
+/**
+ * Upper bound on any teardown step (cancel / abort / close). On a port whose
+ * device has physically gone away these can hang indefinitely rather than
+ * reject, and a hung teardown stalls the whole reconnect loop.
+ */
+const TEARDOWN_TIMEOUT_MS = 750;
+
 /** Backoff before reconnect attempt N (1-based), capped so a match resyncs fast. */
 export function reconnectDelayMs(attempt: number): number {
   const schedule = [250, 500, 1000, 2000];
   const i = Math.min(Math.max(attempt, 1), schedule.length) - 1;
   return schedule[i];
+}
+
+/**
+ * Run a teardown step that must not be trusted to settle. Resolves on success,
+ * on rejection, on a synchronous throw, or when `ms` elapses — whichever comes
+ * first. Nothing downstream cares which of those happened.
+ */
+function settle(fn: () => Promise<unknown>, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    try {
+      void fn().then(done, done);
+    } catch {
+      done();
+    }
+  });
 }
 
 export function isWebSerialSupported(): boolean {
@@ -74,6 +101,8 @@ export class SerialConnection {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
   private reconnecting = false;
+  /** Guards against a native `connect` event racing a backoff tick. */
+  private attemptInFlight = false;
   /** Suppresses retries while esptool owns the port during a flash. */
   private flashing = false;
 
@@ -122,29 +151,33 @@ export class SerialConnection {
    * missed command during a reconnect is expected, not an error.
    */
   async send(line: string): Promise<void> {
-    if (!this.port?.writable) return;
+    // Never take a fresh writer lock while a reconnect is in progress: the
+    // match keepalive keeps calling this, and a re-locked stream blocks the
+    // port.close() the reconnect depends on.
+    if (this.reconnecting || !this.port?.writable) return;
     try {
       if (!this.writer) {
         this.writer = this.port.writable.getWriter();
       }
       await this.writer.write(this.encoder.encode(line + '\n'));
     } catch {
-      // Write failed — the read loop will observe the same drop and retry.
-      this.writer = null;
+      // Write failed — the device is gone. The writer is deliberately kept so
+      // releaseLocks() can abort it and free the lock; dropping the reference
+      // here would leave port.writable locked forever.
+      this.handleDrop();
     }
   }
 
   /** Fully close at the user's request; suppresses automatic reconnection. */
   async disconnect(): Promise<void> {
     this.intentionalClose = true;
+    this.reconnecting = false;
     this.cancelRetry();
     await this.releaseLocks();
     if (this.port) {
-      try {
-        await this.port.close();
-      } catch {
-        // Already closed / device unplugged.
-      }
+      // Bounded: closing a port whose device is gone can hang, and the caller
+      // is a UI handler ("Cancel" during a reconnect) that must not wedge.
+      await settle(() => this.port!.close(), TEARDOWN_TIMEOUT_MS);
       this.port = null;
     }
     this.buffer = '';
@@ -157,11 +190,7 @@ export class SerialConnection {
     this.cancelRetry();
     await this.releaseLocks();
     if (this.port) {
-      try {
-        await this.port.close();
-      } catch {
-        // ignore
-      }
+      await settle(() => this.port!.close(), TEARDOWN_TIMEOUT_MS);
     }
     this.buffer = '';
   }
@@ -174,33 +203,33 @@ export class SerialConnection {
     this.startReadLoop();
   }
 
+  /**
+   * Drop the reader/writer locks. port.close() blocks until both streams are
+   * unlocked, so anything skipped here strands every later reconnect attempt.
+   * The writer is aborted rather than closed: close() waits to flush bytes to
+   * a device that, on a cable pull, is already gone.
+   */
   private async releaseLocks(): Promise<void> {
     this.readLoopRunning = false;
-    if (this.reader) {
+    const reader = this.reader;
+    const writer = this.writer;
+    this.reader = null;
+    this.writer = null;
+    if (reader) {
+      await settle(() => reader.cancel(), TEARDOWN_TIMEOUT_MS);
       try {
-        await this.reader.cancel();
+        reader.releaseLock();
       } catch {
         // ignore
       }
-      try {
-        this.reader.releaseLock();
-      } catch {
-        // ignore
-      }
-      this.reader = null;
     }
-    if (this.writer) {
+    if (writer) {
+      await settle(() => writer.abort(), TEARDOWN_TIMEOUT_MS);
       try {
-        await this.writer.close();
+        writer.releaseLock();
       } catch {
         // ignore
       }
-      try {
-        this.writer.releaseLock();
-      } catch {
-        // ignore
-      }
-      this.writer = null;
     }
   }
 
@@ -212,10 +241,11 @@ export class SerialConnection {
 
   private async readLoop(): Promise<void> {
     while (this.readLoopRunning && this.port?.readable) {
-      this.reader = this.port.readable.getReader();
+      const reader = this.port.readable.getReader();
+      this.reader = reader;
       try {
         while (this.readLoopRunning) {
-          const { value, done } = await this.reader.read();
+          const { value, done } = await reader.read();
           if (done) break;
           if (value) this.ingest(value);
         }
@@ -227,11 +257,11 @@ export class SerialConnection {
         }
       } finally {
         try {
-          this.reader.releaseLock();
+          reader.releaseLock();
         } catch {
           // ignore
         }
-        this.reader = null;
+        if (this.reader === reader) this.reader = null;
       }
     }
   }
@@ -243,7 +273,6 @@ export class SerialConnection {
   handleDrop(): void {
     if (this.intentionalClose || this.flashing) return;
     this.readLoopRunning = false;
-    this.writer = null;
     this.buffer = '';
     if (this.reconnecting) return;
     this.reconnecting = true;
@@ -263,32 +292,43 @@ export class SerialConnection {
   }
 
   private async attemptReconnect(): Promise<void> {
-    if (this.intentionalClose || this.flashing) return;
+    if (this.intentionalClose || this.flashing || this.attemptInFlight) return;
+    this.attemptInFlight = true;
+    try {
+      // The dropped port still holds reader/writer locks from the dead session.
+      // port.close() blocks until both are released, so this must happen before
+      // any open is tried — otherwise every attempt hangs and never reschedules.
+      await this.releaseLocks();
 
-    // Prefer the original port object; after a physical replug Chrome may hand
-    // back a fresh one, so fall back to any port already granted to us.
-    const candidates: SerialPort[] = [];
-    if (this.port) candidates.push(this.port);
-    for (const p of await getGrantedPorts()) {
-      if (!candidates.includes(p)) candidates.push(p);
-    }
+      // Prefer the original port object; after a physical replug Chrome may hand
+      // back a fresh one, so fall back to any port already granted to us.
+      const candidates: SerialPort[] = [];
+      if (this.port) candidates.push(this.port);
+      for (const p of await getGrantedPorts()) {
+        if (!candidates.includes(p)) candidates.push(p);
+      }
 
-    for (const port of candidates) {
-      try {
-        // A half-open port from the previous session must be closed first.
+      for (const port of candidates) {
+        if (this.intentionalClose || this.flashing) return;
+        // A half-open port from the previous session must be closed first. This
+        // is bounded: on an unplugged device close() can hang rather than reject.
+        await settle(() => port.close(), TEARDOWN_TIMEOUT_MS);
         try {
-          await port.close();
+          await this.openAndRead(port);
         } catch {
-          // Wasn't open — fine.
+          continue; // Try the next candidate.
         }
-        await this.openAndRead(port);
         this.handlers.onReconnected?.();
         return;
-      } catch {
-        // Try the next candidate.
       }
+      this.scheduleRetry();
+    } catch {
+      // Anything unexpected (e.g. getPorts() throwing) must still leave a retry
+      // armed; a swallowed failure here is what strands the UI on "reconnecting".
+      this.scheduleRetry();
+    } finally {
+      this.attemptInFlight = false;
     }
-    this.scheduleRetry();
   }
 
   /**
@@ -298,6 +338,7 @@ export class SerialConnection {
    */
   retryNow(): void {
     if (!this.reconnecting || this.intentionalClose || this.flashing) return;
+    if (this.attemptInFlight) return;
     this.cancelRetry();
     void this.attemptReconnect();
   }
