@@ -1,0 +1,26 @@
+# Optional. Coolify can deploy this repo with the Dockerfile build pack alone;
+# this file exists for `docker compose up` locally, and for Coolify's
+# "Docker Compose" build pack if you prefer it.
+#
+# Coolify supplies its own reverse proxy and TLS, so no ports are published
+# here — the proxy reaches the container on port 80 over the shared network.
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Canonical origin baked into the generated /api/v1 links. The site is
+        # reachable at openfc.elevationrobotics.org too, but published URLs
+        # should name one host.
+        OPENFC_BASE_URL: ${OPENFC_BASE_URL:-https://openfc.dev}
+    restart: unless-stopped
+    expose:
+      - '80'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1/healthz']
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3

@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenFC Flasher &amp; Tester</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0b0f17; color: #e5e7eb;
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 20px 64px; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #9ca3af; margin: 0 0 8px; }
+  .sub { color: #9ca3af; margin: 0 0 20px; }
+  .card { border: 1px solid #1f2937; background: #111827aa; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .grow { flex: 1; }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 8px; padding: 8px 14px;
+    color: #fff; background: #374151; cursor: pointer; transition: background .12s;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.12); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #2563eb; }
+  button.green   { background: #15803d; }
+  button.blue    { background: #1d4ed8; }
+  button.red     { background: #b91c1c; }
+  button.ghost   { background: transparent; border: 1px solid #374151; color: #d1d5db; }
+  button.sm      { padding: 5px 10px; font-size: 12px; }
+  .pill { border-radius: 999px; padding: 4px 12px; font-weight: 600; font-size: 12px; }
+  .pill.on  { background: #064e3b; color: #6ee7b7; }
+  .pill.off { background: #3f3f46; color: #d4d4d8; }
+  .pill.warn{ background: #78350f; color: #fcd34d; }
+  .kv { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 13px; }
+  .kv b { color: #9ca3af; font-weight: 500; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .muted { color: #6b7280; }
+  .hint { font-size: 12px; color: #6b7280; margin-top: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 7px 0; border-top: 1px solid #1f2937; }
+  td:last-child { text-align: right; }
+  .toggle { width: 84px; }
+  .toggle.high { background: #15803d; }
+  .toggle.low  { background: #374151; color: #cbd5e1; }
+  progress { width: 100%; height: 10px; accent-color: #2563eb; }
+  #log {
+    height: 200px; overflow: auto; background: #0a0e16; border: 1px solid #1f2937;
+    border-radius: 8px; padding: 10px; font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px; white-space: pre-wrap; word-break: break-word;
+  }
+  .log-tx { color: #93c5fd; }
+  .log-rx { color: #a7f3d0; }
+  .log-err{ color: #fca5a5; }
+  .log-sys{ color: #9ca3af; }
+  .hidden { display: none !important; }
+  .gate { border-color: #78350f; background: #78350f22; color: #fcd34d; }
+  a { color: #93c5fd; }
+</style>
+</head>
+<body>
+<main>
+  <h1>OpenFC Flasher &amp; Tester</h1>
+  <p class="sub">Flash the custom firmware and exercise every output pin over USB — all in one page. Chrome/Edge (Web Serial) required.</p>
+
+  <div id="gate" class="card gate hidden">
+    This browser does not support the Web Serial API. Use desktop <b>Chrome</b> or <b>Edge</b> over <b>https</b> or <b>localhost</b>.
+  </div>
+
+  <!-- Connection -->
+  <div class="card">
+    <div class="row">
+      <h2 class="grow" style="margin:0">Connection</h2>
+      <span id="status" class="pill off">Disconnected</span>
+      <button id="btnConnect" class="primary">Connect</button>
+      <button id="btnDisconnect" class="ghost hidden">Disconnect</button>
+    </div>
+    <div id="devinfo" class="kv" style="margin-top:10px"></div>
+  </div>
+
+  <!-- Flash -->
+  <div class="card">
+    <h2>Flash firmware</h2>
+    <div class="row">
+      <button id="btnFlashBundled" class="primary" disabled>Flash custom firmware</button>
+      <button id="btnPickFile" class="ghost" disabled>Choose .bin…</button>
+      <input id="file" type="file" accept=".bin" class="hidden" />
+      <span id="fileName" class="muted"></span>
+    </div>
+    <div id="flashWrap" class="hidden" style="margin-top:12px">
+      <progress id="prog" max="100" value="0"></progress>
+      <div id="flashMsg" class="muted" style="margin-top:6px"></div>
+    </div>
+    <p class="hint">
+      Flashes a merged image to <span class="mono">0x0</span> at 115200 baud.
+      Bundled image: <span class="mono">/firmware/openfc-diag-merged.bin</span>.
+      Do not unplug the board during flashing.
+    </p>
+  </div>
+
+  <!-- Board state + manual control -->
+  <div class="card" id="ctrlCard">
+    <div class="row">
+      <h2 class="grow" style="margin:0">Board state</h2>
+      <span id="boardState" class="pill off">—</span>
+    </div>
+    <div id="stateKv" class="kv" style="margin:10px 0 14px"></div>
+    <h2>Manual control</h2>
+    <div class="row">
+      <button id="btnDisable" class="red" disabled>Disable</button>
+      <button id="btnDriver" class="green" disabled>Enable · Driver</button>
+      <button id="btnAuto" class="blue" disabled>Enable · Auto</button>
+      <button id="btnEstop" class="red" disabled>E-STOP</button>
+      <button id="btnIdentify" class="ghost" disabled>Identify</button>
+      <button id="btnGetState" class="ghost" disabled>Get state</button>
+    </div>
+  </div>
+
+  <!-- Raw pin toggles -->
+  <div class="card">
+    <div class="row">
+      <h2 class="grow" style="margin:0">Raw pin toggles</h2>
+      <button id="btnRefreshPins" class="ghost sm" disabled>Refresh</button>
+    </div>
+    <table><tbody id="pinRows"></tbody></table>
+    <p id="pinEmpty" class="hint">Connect a board to read pin state. HIGH = opto ON = that V5 pin grounded (asserted). ED HIGH = Disabled; AD HIGH = Autonomous.</p>
+  </div>
+
+  <!-- Log -->
+  <div class="card">
+    <div class="row">
+      <h2 class="grow" style="margin:0">Serial log</h2>
+      <button id="btnClearLog" class="ghost sm">Clear</button>
+    </div>
+    <div id="log"></div>
+  </div>
+</main>
+<script type="module">
+const BAUD = 115200;
+const BUNDLED_URL = '/firmware/openfc-diag-merged.bin';
+const ESPTOOL_CDN = 'https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/+esm';
+
+const $ = (id) => document.getElementById(id);
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
+
+let port = null, reader = null, writer = null;
+let readRunning = false, buffer = '', monitoring = false;
+let pendingFile = null, pendingName = '';
+let rxWatchdog = null;
+
+// ── logging ──────────────────────────────────────────────────────────────
+function log(msg, cls = 'log-sys') {
+  const el = $('log');
+  const line = document.createElement('div');
+  line.className = cls;
+  const t = new Date().toLocaleTimeString();
+  line.textContent = `[${t}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── serial I/O ───────────────────────────────────────────────────────────
+async function send(obj) {
+  if (!port || !port.writable) return;
+  const json = JSON.stringify(obj);
+  if (!writer) writer = port.writable.getWriter();
+  await writer.write(encoder.encode(json + '\n'));
+  log('→ ' + json, 'log-tx');
+}
+
+function startReadLoop() { readRunning = true; void readLoop(); }
+
+async function readLoop() {
+  while (readRunning && port && port.readable) {
+    reader = port.readable.getReader();
+    try {
+      while (readRunning) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) ingest(value);
+      }
+    } catch {
+      if (readRunning) { readRunning = false; setConnected(false); log('Serial disconnected.', 'log-err'); }
+    } finally {
+      try { reader.releaseLock(); } catch {}
+      reader = null;
+    }
+  }
+}
+
+function ingest(chunk) {
+  buffer += decoder.decode(chunk, { stream: true });
+  let nl;
+  while ((nl = buffer.indexOf('\n')) >= 0) {
+    const raw = buffer.slice(0, nl).trim();
+    buffer = buffer.slice(nl + 1);
+    if (!raw) continue;
+    noteRx();
+    let evt = null;
+    try { evt = JSON.parse(raw); } catch { log('· ' + raw, 'log-sys'); continue; }
+    if (evt && typeof evt.evt === 'string') dispatch(evt, raw);
+  }
+}
+
+async function releaseLocks() {
+  readRunning = false;
+  if (reader) { try { await reader.cancel(); } catch {} try { reader.releaseLock(); } catch {} reader = null; }
+  if (writer) { try { await writer.close(); } catch {} try { writer.releaseLock(); } catch {} writer = null; }
+}
+
+async function connect() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: BAUD });
+    monitoring = true;
+    setConnected(true);
+    log('Connected.', 'log-sys');
+    startReadLoop();
+    armRxWatchdog(2500);
+    setTimeout(() => { void send({ cmd: 'get_state' }); void send({ cmd: 'get_pins' }); }, 300);
+  } catch (e) {
+    const m = e && e.message ? e.message : String(e);
+    if (!/No port selected|NotFoundError|cancell?ed/i.test(m)) log('Connect failed: ' + m, 'log-err');
+  }
+}
+
+async function disconnect() {
+  await releaseLocks();
+  if (port) { try { await port.close(); } catch {} port = null; }
+  monitoring = false; buffer = '';
+  noteRx();
+  setConnected(false);
+  log('Disconnected.', 'log-sys');
+}
+
+// ── post-flash reconnect (CH340C on UART0) ───────────────────────────────
+// The CH340C bridge does NOT drop off the USB bus when the ESP32-S3 resets, so
+// the same SerialPort handle stays valid. After flashing we just close, give
+// the board a moment to boot, and reopen the same port.
+function armRxWatchdog(ms) {
+  clearTimeout(rxWatchdog);
+  rxWatchdog = setTimeout(() => {
+    log('No data from the board yet. If state/pins stay blank, unplug and replug ' +
+        'the USB cable (or tap the board\u2019s reset), then click Connect.', 'log-err');
+  }, ms);
+}
+function noteRx() { if (rxWatchdog) { clearTimeout(rxWatchdog); rxWatchdog = null; } }
+
+async function pickReenumeratedPort(prevPort) {
+  const want = prevPort ? prevPort.getInfo() : null;
+  const ports = await navigator.serial.getPorts();
+  if (prevPort && ports.includes(prevPort)) return prevPort;
+  if (want && want.usbVendorId != null) {
+    const m = ports.find((p) => {
+      const i = p.getInfo();
+      return i.usbVendorId === want.usbVendorId && i.usbProductId === want.usbProductId;
+    });
+    if (m) return m;
+  }
+  return ports[0] || prevPort || null;
+}
+
+function manualReconnectHint() {
+  port = null; monitoring = false; setConnected(false);
+  flashProgress(-1, 'Flash complete. Board reset \u2014 click Connect to start testing.');
+  log('Board re-enumerated after flashing. Click \u201CConnect\u201D and pick the OpenFC ' +
+      'port to begin testing.', 'log-sys');
+}
+
+async function reconnectAfterFlash(prevPort) {
+  flashProgress(100, 'Board resetting \u2014 reconnecting\u2026');
+  await releaseLocks();
+  if (prevPort) { try { await prevPort.close(); } catch {} }
+  // CH340C stays enumerated through the reset; just let the board boot, then
+  // reopen the same handle. Fall back to re-discovery only if that fails.
+  await new Promise((r) => setTimeout(r, 800));
+  let p = prevPort;
+  buffer = '';
+  try {
+    await p.open({ baudRate: BAUD });
+  } catch {
+    p = await pickReenumeratedPort(prevPort);
+    if (!p) { manualReconnectHint(); return; }
+    try { await p.open({ baudRate: BAUD }); }
+    catch { manualReconnectHint(); return; }
+  }
+  port = p;
+  monitoring = true;
+  setConnected(true);
+  startReadLoop();
+  log('Reconnected after flash.', 'log-sys');
+  armRxWatchdog(3000);
+  setTimeout(() => { void send({ cmd: 'get_state' }); void send({ cmd: 'get_pins' }); }, 300);
+}
+
+// ── event dispatch ───────────────────────────────────────────────────────
+function dispatch(evt, raw) {
+  switch (evt.evt) {
+    case 'heartbeat': return; // too chatty to log
+    case 'hello': renderDeviceInfo(evt); log('← ' + raw, 'log-rx'); return;
+    case 'state': renderState(evt); log('← ' + raw, 'log-rx'); return;
+    case 'pins': renderPins(evt.pins || []); log('← ' + raw, 'log-rx'); return;
+    case 'error': log('← ' + raw, 'log-err'); return;
+    default: log('← ' + raw, 'log-rx');
+  }
+}
+
+function renderDeviceInfo(evt) {
+  const hash = evt.fw_hash ? `<span class="mono">${evt.fw_hash.slice(0, 16)}…</span>` : '<span class="muted">—</span>';
+  $('devinfo').innerHTML =
+    `<span><b>Device</b> <span class="mono">${evt.device_id ?? '—'}</span></span>` +
+    `<span><b>FW</b> <span class="mono">${evt.fw_version ?? '—'}</span></span>` +
+    `<span><b>HW</b> <span class="mono">${evt.hw_version ?? '—'}</span></span>` +
+    `<span><b>Hash</b> ${hash}</span>`;
+}
+
+function renderState(evt) {
+  const s = evt.state || '—';
+  const pill = $('boardState');
+  pill.textContent = s;
+  pill.className = 'pill ' + (s.startsWith('ENABLED') ? 'on' : s.includes('ESTOP') ? 'warn' : 'off');
+  let kv = `<span><b>enable</b> ${evt.enable}</span><span><b>mode</b> ${evt.mode ?? '—'}</span>`;
+  if (evt.timed) kv += `<span><b>timed</b> ${evt.remaining_ms}/${evt.duration_ms} ms</span>`;
+  $('stateKv').innerHTML = kv;
+}
+
+function renderPins(pins) {
+  $('pinEmpty').classList.toggle('hidden', pins.length > 0);
+  const body = $('pinRows');
+  body.innerHTML = '';
+  for (const p of pins) {
+    const portNo = String(p.label).replace(/[^0-9]/g, '');
+    const kind = String(p.label).startsWith('AD') ? 'Driver/Auto' : 'Enable/Disable';
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td');
+    td1.innerHTML = `<span class="mono">${p.label}</span> <span class="muted">Port ${portNo} · ${kind} · IO${p.pin}</span>`;
+    const td2 = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'toggle sm ' + (p.value ? 'high' : 'low');
+    btn.textContent = p.value ? 'HIGH' : 'LOW';
+    btn.disabled = !monitoring;
+    btn.onclick = () => void send({ cmd: 'set_pin', pin: p.pin, value: !p.value });
+    td2.appendChild(btn);
+    tr.append(td1, td2);
+    body.appendChild(tr);
+  }
+}
+
+// ── flashing (esptool-js, loaded on demand) ──────────────────────────────
+function abToBinaryString(buf) {
+  const bytes = new Uint8Array(buf);
+  let out = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk)
+    out += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+  return out;
+}
+
+function flashProgress(pct, msg) {
+  $('flashWrap').classList.remove('hidden');
+  if (pct >= 0) $('prog').value = pct;
+  if (msg) $('flashMsg').textContent = msg;
+}
+
+async function flash() {
+  setFlashing(true);
+  $('prog').value = 0;
+  try {
+    let data = pendingFile;
+    if (!data) {
+      flashProgress(0, 'Fetching bundled image…');
+      const res = await fetch(BUNDLED_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Could not fetch ${BUNDLED_URL} (${res.status}). Use “Choose .bin…”.`);
+      data = await res.arrayBuffer();
+    }
+    flashProgress(0, 'Loading flasher…');
+    const { ESPLoader, Transport } = await import(ESPTOOL_CDN);
+
+    if (port) { await releaseLocks(); try { await port.close(); } catch {} }
+    else { port = await navigator.serial.requestPort(); }
+    monitoring = false;
+    setConnected(false);
+
+    const terminal = { clean() {}, write(d) { flashProgress(-1, d); }, writeLine(d) { flashProgress(-1, d); } };
+    const transport = new Transport(port, false);
+    const loader = new ESPLoader({ transport, baudrate: BAUD, romBaudrate: BAUD, terminal });
+    try {
+      flashProgress(0, 'Connecting to bootloader…');
+      const chip = await loader.main();
+      flashProgress(5, 'Detected ' + chip);
+      const bin = abToBinaryString(data);
+      const total = bin.length;
+      flashProgress(8, 'Writing flash at 0x0…');
+      await loader.writeFlash({
+        fileArray: [{ data: bin, address: 0x0 }],
+        flashSize: 'keep', flashMode: 'keep', flashFreq: 'keep',
+        eraseAll: false, compress: true,
+        reportProgress: (_i, written, t) => {
+          const denom = t || total || 1;
+          flashProgress(Math.min(8 + Math.round((written / denom) * 90), 98),
+            `Writing ${written.toLocaleString()} / ${denom.toLocaleString()} bytes`);
+        },
+      });
+      flashProgress(99, 'Resetting board…');
+      await loader.after('hard_reset');
+      flashProgress(100, 'Flash complete.');
+      log('Flash complete.', 'log-sys');
+    } finally {
+      try { await transport.disconnect(); } catch {}
+    }
+
+    // CH340C stays on the bus across the reset; close and reopen the same port.
+    await reconnectAfterFlash(port);
+  } catch (e) {
+    const m = e && e.message ? e.message : String(e);
+    flashProgress(-1, 'Error: ' + m);
+    log('Flash failed: ' + m, 'log-err');
+  } finally {
+    setFlashing(false);
+  }
+}
+
+// ── UI wiring ────────────────────────────────────────────────────────────
+function setConnected(on) {
+  $('status').textContent = on ? 'Connected' : 'Disconnected';
+  $('status').className = 'pill ' + (on ? 'on' : 'off');
+  $('btnConnect').classList.toggle('hidden', on);
+  $('btnDisconnect').classList.toggle('hidden', !on);
+  for (const id of ['btnDisable', 'btnDriver', 'btnAuto', 'btnEstop', 'btnIdentify', 'btnGetState', 'btnRefreshPins'])
+    $(id).disabled = !on;
+  if (!on) {
+    $('boardState').textContent = '—';
+    $('boardState').className = 'pill off';
+    $('stateKv').innerHTML = '';
+    renderPins([]);
+  }
+}
+
+function setFlashing(b) {
+  for (const id of ['btnFlashBundled', 'btnPickFile', 'btnConnect', 'btnDisconnect'])
+    $(id).disabled = b;
+}
+
+function init() {
+  if (!('serial' in navigator)) {
+    $('gate').classList.remove('hidden');
+    return;
+  }
+  $('btnFlashBundled').disabled = false;
+  $('btnPickFile').disabled = false;
+
+  $('btnConnect').onclick = () => void connect();
+  $('btnDisconnect').onclick = () => void disconnect();
+  $('btnFlashBundled').onclick = () => void flash();
+  $('btnPickFile').onclick = () => $('file').click();
+  $('file').onchange = async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    pendingFile = await f.arrayBuffer();
+    pendingName = f.name;
+    $('fileName').textContent = `${f.name} (${(pendingFile.byteLength / 1024).toFixed(0)} KB)`;
+    log(`Selected ${f.name} — click “Flash custom firmware” to write it.`, 'log-sys');
+  };
+
+  $('btnDisable').onclick = () => void send({ cmd: 'set', enable: false, mode: 'driver' });
+  $('btnDriver').onclick = () => { void send({ cmd: 'set', enable: true, mode: 'driver' }); refreshPinsSoon(); };
+  $('btnAuto').onclick = () => { void send({ cmd: 'set', enable: true, mode: 'auto' }); refreshPinsSoon(); };
+  $('btnEstop').onclick = () => void send({ cmd: 'estop' });
+  $('btnIdentify').onclick = () => void send({ cmd: 'identify' });
+  $('btnGetState').onclick = () => void send({ cmd: 'get_state' });
+  $('btnRefreshPins').onclick = () => void send({ cmd: 'get_pins' });
+  $('btnClearLog').onclick = () => { $('log').innerHTML = ''; };
+
+  window.addEventListener('beforeunload', () => { void disconnect(); });
+}
+
+function refreshPinsSoon() { setTimeout(() => { if (monitoring) void send({ cmd: 'get_pins' }); }, 150); }
+
+init();
+</script>
+</body>
+</html>

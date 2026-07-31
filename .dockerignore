@@ -1,0 +1,18 @@
+# Build context for the deploy image. Only what `next build` needs.
+node_modules
+.next
+out
+.git
+.idea
+.vscode
+*.iml
+
+# firmware sources and PlatformIO artifacts are not part of the web build.
+# public/firmware/*.bin IS needed and lives under public/, so it is kept.
+firmware/.pio
+.pio
+
+tsconfig.tsbuildinfo
+npm-debug.log*
+.env
+.env*.local
