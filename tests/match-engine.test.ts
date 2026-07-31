@@ -296,6 +296,60 @@ describe('reconnect resync', () => {
     expect(cmds('start_period').length).toBe(0);
     engine.destroy();
   });
+
+  it('re-arms with the running period\u2019s own token', () => {
+    // Untokenised, this re-arm cannot tell a start_period lost on the wire
+    // from a period that finished while the link was down, and in the second
+    // case it re-enables the robots after the match. The token moves that
+    // decision to the board.
+    const { engine, cmds } = makeEngine({ sequence: 'auto', autoDurationMs: 15000 });
+    engine.start();
+    const first = JSON.parse(cmds('start_period')[0]);
+    vi.advanceTimersByTime(1000);
+    engine.resyncTimer(false, 0);
+    const rearm = JSON.parse(cmds('start_period')[1]);
+    expect(rearm.match_id).toBe(first.match_id);
+    expect(rearm.period_seq).toBe(first.period_seq);
+    engine.destroy();
+  });
+});
+
+describe('period tokens', () => {
+  it('gives every period a new sequence number', () => {
+    // The board refuses to run a token it has retired, so reusing a sequence
+    // number would have the driver period rejected with period_complete.
+    const { engine, cmds } = makeEngine();
+    engine.start();
+    engine.handleEvent(expired('auto'));
+    vi.advanceTimersByTime(5200);
+    const starts = cmds('start_period').map((s) => JSON.parse(s));
+    expect(starts.length).toBe(2);
+    expect(starts[0].match_id).toBe(starts[1].match_id);
+    expect(starts[1].period_seq).toBe(starts[0].period_seq + 1);
+    engine.destroy();
+  });
+
+  it('keeps one match_id for the whole match, within the firmware limit', () => {
+    const { engine, cmds } = makeEngine();
+    engine.start();
+    const { match_id: id } = JSON.parse(cmds('start_period')[0]);
+    expect(typeof id).toBe('string');
+    expect(id.length).toBeGreaterThan(0);
+    expect(id.length).toBeLessThanOrEqual(32);
+    engine.destroy();
+  });
+
+  it('does not reuse a match_id across matches', () => {
+    const a = makeEngine();
+    const b = makeEngine();
+    a.engine.start();
+    b.engine.start();
+    expect(JSON.parse(a.cmds('start_period')[0]).match_id).not.toBe(
+      JSON.parse(b.cmds('start_period')[0]).match_id,
+    );
+    a.engine.destroy();
+    b.engine.destroy();
+  });
 });
 
 describe('presets', () => {

@@ -1,7 +1,8 @@
 // Match state machine — period sequencing + timing. See spec §9.2.2–§9.2.4.
 // Framework-agnostic: the match page subscribes for state updates.
 
-import { cmd, OpenFCEvent } from './openfc-protocol';
+import { cmd, OpenFCEvent, PeriodToken } from './openfc-protocol';
+import { mintMatchId } from './period-controller';
 
 export type MatchPhase =
   | 'idle'
@@ -101,7 +102,21 @@ export class MatchEngine {
   private rafId: number | null = null;
   private fallbackId: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * Identifies this match to the board. Each period gets its own `periodSeq`,
+   * so the re-arm in resyncTimer() below replays a token the board recognises
+   * instead of asking for a fresh period. On proto-2 firmware the extra fields
+   * are ignored and behaviour is unchanged.
+   */
+  private readonly matchId = mintMatchId('practice');
+  private periodSeq = 0;
+
   constructor(private config: MatchConfig, private send: SendFn) {}
+
+  /** Token of the period currently armed on the board, if any. */
+  private token(): PeriodToken {
+    return { matchId: this.matchId, periodSeq: this.periodSeq };
+  }
 
   subscribe(fn: (s: MatchState) => void): () => void {
     this.listeners.add(fn);
@@ -204,20 +219,32 @@ export class MatchEngine {
     const left = Math.round(this.state.timeRemainingMs);
     // Below the threshold the period is ending anyway; re-arming would only
     // race the expiry handling.
-    if (left > RESYNC_MIN_MS) this.send(cmd.startPeriod(phase, left));
+    //
+    // The token matters here. Untokenised, this re-arm cannot tell "the
+    // start_period was lost while the link was down" from "the period ran to
+    // its end while the link was down", and in the second case it re-enables
+    // the robots after the match. With the token the board decides: a period
+    // it is still running is a no-op, and one it has retired comes back as
+    // period_complete.
+    if (left > RESYNC_MIN_MS) {
+      this.send(cmd.startPeriod(phase, left, this.token()));
+    }
   }
 
   private enterActive(mode: 'auto' | 'driver'): void {
     const durationMs =
       mode === 'auto' ? this.config.autoDurationMs : this.config.driverDurationMs;
     this.clearFallback();
+    // A new period always needs a new sequence number: the board refuses to run
+    // a token it has already retired, so reusing one would be rejected outright.
+    this.periodSeq += 1;
     this.set({
       phase: mode,
       phaseStartedAt: performance.now(),
       phaseDurationMs: durationMs,
       timeRemainingMs: durationMs,
     });
-    this.send(cmd.startPeriod(mode, durationMs));
+    this.send(cmd.startPeriod(mode, durationMs, this.token()));
     this.startPing();
     this.startCountdown();
   }
