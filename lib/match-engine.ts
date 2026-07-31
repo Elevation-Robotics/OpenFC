@@ -7,6 +7,8 @@ export type MatchPhase =
   | 'idle'
   | 'auto'
   | 'gap'
+  /** Period over, robots disabled, holding until the operator starts the next. */
+  | 'waiting'
   | 'driver'
   | 'done'
   | 'stopped'
@@ -14,11 +16,19 @@ export type MatchPhase =
 
 export type MatchSequence = 'auto' | 'driver' | 'both';
 
+/**
+ * How the driver period follows the autonomous one. `manual` holds in `waiting`
+ * until the operator says go, which is what practice actually looks like — the
+ * timed gap only matters when mirroring competition pacing.
+ */
+export type MatchTransitions = 'timed' | 'manual';
+
 export interface MatchConfig {
   autoDurationMs: number;
   driverDurationMs: number;
   gapDurationMs: number;
   sequence: MatchSequence;
+  transitions: MatchTransitions;
 }
 
 // Period bounds. The upper bound mirrors the firmware's PERIOD_MAX_MS (10 min);
@@ -111,6 +121,35 @@ export class MatchEngine {
     else this.enterActive('auto');
   }
 
+  /**
+   * Whether the operator can act on the current phase: end the running period
+   * early, or release a `waiting` hold into the next one.
+   */
+  canAdvance(): boolean {
+    const { phase } = this.state;
+    return phase === 'auto' || phase === 'driver' || phase === 'gap' ||
+      phase === 'waiting';
+  }
+
+  /**
+   * Operator-driven transition. From a running period this ends it early
+   * (disabling the robots first, exactly as expiry does); from `gap` or
+   * `waiting` it starts the next period immediately.
+   */
+  advance(): void {
+    const { phase } = this.state;
+    if (phase === 'gap' || phase === 'waiting') {
+      this.enterActive('driver');
+      return;
+    }
+    if (phase !== 'auto' && phase !== 'driver') return;
+    // The board owns a running countdown; cancel it so the robots are disabled
+    // now rather than at the original expiry, and so the next start_period is
+    // not rejected with timer_active.
+    this.send(cmd.estop());
+    this.advanceFromActive();
+  }
+
   stop(): void {
     this.stopPing();
     this.clearFallback();
@@ -194,13 +233,26 @@ export class MatchEngine {
     this.startCountdown();
   }
 
+  /** Indefinite hold between periods; only advance() leaves it. */
+  private enterWaiting(): void {
+    this.clearFallback();
+    this.stopCountdown();
+    this.set({
+      phase: 'waiting',
+      phaseStartedAt: performance.now(),
+      phaseDurationMs: 0,
+      timeRemainingMs: 0,
+    });
+  }
+
   private advanceFromActive(): void {
     const from = this.state.phase;
     if (from !== 'auto' && from !== 'driver') return;
     this.stopPing();
     this.clearFallback();
     if (from === 'auto' && this.config.sequence === 'both') {
-      if (this.config.gapDurationMs > 0) this.enterGap();
+      if (this.config.transitions === 'manual') this.enterWaiting();
+      else if (this.config.gapDurationMs > 0) this.enterGap();
       else this.enterActive('driver');
     } else {
       this.enterDone();

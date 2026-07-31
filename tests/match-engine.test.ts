@@ -27,6 +27,7 @@ function config(over: Partial<MatchConfig> = {}): MatchConfig {
     driverDurationMs: 90000,
     gapDurationMs: 5000,
     sequence: 'both',
+    transitions: 'timed',
     ...over,
   };
 }
@@ -94,6 +95,111 @@ describe('start + sequencing', () => {
     engine.start();
     expect(engine.getState().phase).toBe('driver');
     expect(cmds('start_period').some((s) => s.includes('driver'))).toBe(true);
+    engine.destroy();
+  });
+});
+
+describe('manual transitions', () => {
+  it('holds in waiting after auto instead of running a gap', () => {
+    const { engine } = makeEngine({ transitions: 'manual' });
+    engine.start();
+    engine.handleEvent(expired('auto'));
+    expect(engine.getState().phase).toBe('waiting');
+    // The hold is indefinite: no countdown carries it into driver.
+    vi.advanceTimersByTime(60000);
+    expect(engine.getState().phase).toBe('waiting');
+    engine.destroy();
+  });
+
+  it('advance() from waiting starts driver', () => {
+    const { engine, cmds } = makeEngine({ transitions: 'manual' });
+    engine.start();
+    engine.handleEvent(expired('auto'));
+    engine.advance();
+    expect(engine.getState().phase).toBe('driver');
+    expect(cmds('start_period').some((s) => s.includes('driver'))).toBe(true);
+    engine.destroy();
+  });
+
+  it('advance() ends a running auto early and estops before re-arming', () => {
+    const { engine, sent } = makeEngine({ transitions: 'manual' });
+    engine.start();
+    vi.advanceTimersByTime(3000);
+    engine.advance();
+    expect(engine.getState().phase).toBe('waiting');
+    // The board rejects start_period while its own timer runs, so the early
+    // end must cancel it first.
+    expect(sent.some((s) => s.includes('"estop"'))).toBe(true);
+    engine.advance();
+    expect(engine.getState().phase).toBe('driver');
+    const estopAt = sent.findIndex((s) => s.includes('"estop"'));
+    const driverAt = sent.findIndex(
+      (s) => s.includes('start_period') && s.includes('driver'),
+    );
+    expect(estopAt).toBeLessThan(driverAt);
+    engine.destroy();
+  });
+
+  it('advance() during driver ends the match', () => {
+    const { engine } = makeEngine({ transitions: 'manual' });
+    engine.start();
+    engine.handleEvent(expired('auto'));
+    engine.advance();
+    expect(engine.getState().phase).toBe('driver');
+    engine.advance();
+    expect(engine.getState().phase).toBe('done');
+    engine.destroy();
+  });
+
+  it('advance() skips the remainder of a timed gap', () => {
+    const { engine } = makeEngine({ transitions: 'timed' });
+    engine.start();
+    engine.handleEvent(expired('auto'));
+    expect(engine.getState().phase).toBe('gap');
+    engine.advance();
+    expect(engine.getState().phase).toBe('driver');
+    engine.destroy();
+  });
+
+  it('a single-period sequence ends rather than waiting', () => {
+    const { engine } = makeEngine({ sequence: 'auto', transitions: 'manual' });
+    engine.start();
+    engine.handleEvent(expired('auto'));
+    expect(engine.getState().phase).toBe('done');
+    engine.destroy();
+  });
+
+  it('canAdvance() is false outside a live match', () => {
+    const { engine } = makeEngine({ transitions: 'manual' });
+    expect(engine.canAdvance()).toBe(false);
+    engine.start();
+    expect(engine.canAdvance()).toBe(true);
+    engine.stop();
+    expect(engine.canAdvance()).toBe(false);
+    engine.destroy();
+  });
+
+  it('advance() is a no-op once the match is over', () => {
+    const { engine, cmds } = makeEngine({ transitions: 'manual' });
+    engine.start();
+    engine.handleEvent(expired('auto'));
+    engine.advance();
+    engine.handleEvent(expired('driver'));
+    expect(engine.getState().phase).toBe('done');
+    const before = cmds('start_period').length;
+    engine.advance();
+    expect(engine.getState().phase).toBe('done');
+    expect(cmds('start_period').length).toBe(before);
+    engine.destroy();
+  });
+
+  it('stops pinging while waiting, since no period is armed', () => {
+    const { engine, cmds } = makeEngine({ transitions: 'manual' });
+    engine.start();
+    engine.handleEvent(expired('auto'));
+    const before = cmds('ping').length;
+    vi.advanceTimersByTime(2000);
+    expect(cmds('ping').length).toBe(before);
     engine.destroy();
   });
 });

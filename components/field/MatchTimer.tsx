@@ -17,6 +17,7 @@ import DeviceStatus from './DeviceStatus';
 const COLORS: Record<MatchPhase, { bg: string; fg: string }> = {
   idle: { bg: '#0d1117', fg: '#ffffff' },
   gap: { bg: '#0d1117', fg: '#ffffff' },
+  waiting: { bg: '#0d1117', fg: '#ffffff' },
   auto: { bg: '#0d1f4d', fg: '#93c5fd' },
   driver: { bg: '#0d2e14', fg: '#86efac' },
   stopped: { bg: '#2e0d0d', fg: '#fca5a5' },
@@ -74,16 +75,27 @@ export default function MatchTimer({ config }: { config: MatchConfig }) {
     });
   }, [subscribe]);
 
-  // Space = STOP during an active match (§9.2.5).
+  // Space = STOP during an active match (§9.2.5); Enter = advance the phase.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'Space') return;
       const engine = engineRef.current;
       if (!engine) return;
       const ph = engine.getState().phase;
-      if (ph === 'auto' || ph === 'driver' || ph === 'gap') {
-        e.preventDefault();
-        engine.stop();
+      if (e.code === 'Space') {
+        if (ph === 'auto' || ph === 'driver' || ph === 'gap' || ph === 'waiting') {
+          e.preventDefault();
+          engine.stop();
+        }
+        return;
+      }
+      if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+        if (ph === 'idle') {
+          e.preventDefault();
+          engine.start();
+        } else if (engine.canAdvance()) {
+          e.preventDefault();
+          engine.advance();
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -96,7 +108,8 @@ export default function MatchTimer({ config }: { config: MatchConfig }) {
   }, []);
 
   const { bg, fg } = COLORS[m.phase];
-  const active = m.phase === 'auto' || m.phase === 'driver' || m.phase === 'gap';
+  const running = m.phase === 'auto' || m.phase === 'driver';
+  const active = running || m.phase === 'gap' || m.phase === 'waiting';
   const firstMs =
     config.sequence === 'driver' ? config.driverDurationMs : config.autoDurationMs;
   const progress =
@@ -104,8 +117,15 @@ export default function MatchTimer({ config }: { config: MatchConfig }) {
       ? (m.phaseDurationMs - m.timeRemainingMs) / m.phaseDurationMs
       : 0;
 
+  // Ending a period early is only a transition when another one follows;
+  // otherwise it just ends the match, which STOP already does.
+  const hasNext =
+    config.sequence === 'both' && (m.phase === 'auto' || m.phase === 'gap' ||
+      m.phase === 'waiting');
+
   let bigText = fmt(m.timeRemainingMs);
   if (m.phase === 'idle') bigText = fmt(firstMs);
+  else if (m.phase === 'waiting') bigText = fmt(config.driverDurationMs);
   else if (m.phase === 'done') bigText = '✓';
   else if (m.phase === 'stopped' || m.phase === 'error') bigText = '0:00';
 
@@ -149,6 +169,14 @@ export default function MatchTimer({ config }: { config: MatchConfig }) {
           START MATCH ▶
         </button>
       )}
+      {hasNext && (
+        <button
+          onClick={() => engineRef.current?.advance()}
+          className="mt-10 rounded-lg bg-green-600 px-10 py-4 text-2xl font-bold text-white hover:bg-green-500"
+        >
+          {m.phase === 'auto' ? 'SKIP TO DRIVER ▶' : 'START DRIVER ▶'}
+        </button>
+      )}
       {m.phase === 'done' && (
         <div className="mt-10 flex gap-4">
           <ActionButton onClick={() => engineRef.current?.reset()}>Run Again</ActionButton>
@@ -164,7 +192,9 @@ export default function MatchTimer({ config }: { config: MatchConfig }) {
       <footer className="absolute bottom-3 left-0 right-0 flex flex-col items-center gap-1 text-xs">
         <DeviceStatus />
         {active && showHint && (
-          <span className="text-white/50">Press SPACE to stop</span>
+          <span className="text-white/50">
+            {hasNext ? 'ENTER to advance · SPACE to stop' : 'Press SPACE to stop'}
+          </span>
         )}
       </footer>
     </div>
@@ -181,6 +211,8 @@ function label(m: MatchState): string {
       return 'DRIVER CONTROL';
     case 'gap':
       return `TRANSITION IN ${fmt(m.timeRemainingMs)}`;
+    case 'waiting':
+      return 'READY FOR DRIVER CONTROL';
     case 'done':
       return 'MATCH COMPLETE';
     case 'stopped':

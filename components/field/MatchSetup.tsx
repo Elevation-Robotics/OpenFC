@@ -10,6 +10,7 @@ import {
   GAP_MAX_S,
   MATCH_PRESETS,
   MatchSequence,
+  MatchTransitions,
   PERIOD_MAX_S,
   PERIOD_MIN_S,
 } from '@/lib/match-engine';
@@ -33,6 +34,7 @@ export default function MatchSetup() {
   const [driver, setDriver] = useState(105);
   const [gap, setGap] = useState(5);
   const [sequence, setSequence] = useState<MatchSequence>('both');
+  const [transitions, setTransitions] = useState<MatchTransitions>('manual');
   const [presetId, setPresetId] = useState('full');
 
   const applyPreset = (id: string) => {
@@ -51,16 +53,20 @@ export default function MatchSetup() {
     setter(value);
   };
 
+  const timedGap = sequence === 'both' && transitions === 'timed';
+
   const total =
     (sequence !== 'driver' ? auto : 0) +
     (sequence !== 'auto' ? driver : 0) +
-    (sequence === 'both' ? gap : 0);
+    (timedGap ? gap : 0);
 
   const start = () => {
     const a = clampInt(auto, PERIOD_MIN_S, PERIOD_MAX_S);
     const d = clampInt(driver, PERIOD_MIN_S, PERIOD_MAX_S);
     const g = clampInt(gap, 0, GAP_MAX_S);
-    router.push(`/field/match?auto=${a}&driver=${d}&gap=${g}&seq=${sequence}`);
+    router.push(
+      `/field/match?auto=${a}&driver=${d}&gap=${g}&seq=${sequence}&trans=${transitions}`,
+    );
   };
 
   return (
@@ -131,6 +137,29 @@ export default function MatchSetup() {
           />
         )}
         {sequence === 'both' && (
+          <fieldset className="space-y-2">
+            <legend className="text-sm text-gray-400">Between periods</legend>
+            <Radio
+              name="trans"
+              checked={transitions === 'manual'}
+              onChange={() => edit(setTransitions)('manual')}
+              label="Wait for me (manual)"
+            />
+            <Radio
+              name="trans"
+              checked={transitions === 'timed'}
+              onChange={() => edit(setTransitions)('timed')}
+              label="Timed gap"
+            />
+            <p className="text-xs text-gray-500">
+              {transitions === 'manual'
+                ? 'Robots stay disabled after autonomous until you start driver control.'
+                : 'Driver control starts automatically after the gap.'}
+            </p>
+          </fieldset>
+        )}
+
+        {timedGap && (
           <div>
             <NumberField
               label="Transition gap"
@@ -149,6 +178,9 @@ export default function MatchSetup() {
       <p className="mt-5 text-sm text-gray-400">
         Total field time{' '}
         <span className="font-mono text-gray-200">{fmt(total)}</span>
+        {sequence === 'both' && transitions === 'manual' && (
+          <span className="text-gray-500"> plus the transition you control</span>
+        )}
       </p>
 
       <button
