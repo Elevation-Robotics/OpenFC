@@ -25,7 +25,7 @@ export default function ProtocolDocs() {
         <>
           The board speaks newline-delimited JSON over USB serial. Anything that
           can open a serial port can drive it — no SDK required. Protocol
-          revision <T>2</T>, firmware 1.3.0.
+          revision <T>3</T>, firmware 1.4.0.
         </>
       }
     >
@@ -72,6 +72,71 @@ export default function ProtocolDocs() {
         </p>
       </Section>
 
+      <Section id="tokens" title="Period tokens">
+        <p>
+          Losing the host mid-match is normal, not exceptional — the page
+          reloads, the operator reopens it, the cable is replugged. The problem
+          that creates is that a reconnecting host cannot tell the board
+          &quot;this is the period you are already running&quot; without the
+          board hearing &quot;start a new one&quot;. Protocol 3 fixes that with
+          a token: <T>match_id</T> (opaque, up to 32 characters) plus{' '}
+          <T>period_seq</T>, sent on <T>start_period</T> and carried by{' '}
+          <T>resync</T> and <T>end_period</T>.
+        </p>
+        <Table
+          head={['start_period arrives', 'Board does']}
+          rows={[
+            ['No period running, unused token', 'Starts the period.'],
+            [
+              'Period running, same token',
+              'Nothing. Acks and re-sends state. The countdown and the outputs are untouched — a replay is not a restart.',
+            ],
+            [
+              'Period running, different token',
+              <>
+                Rejects with <T>timer_active</T>. A running match is never
+                silently preempted.
+              </>,
+            ],
+            [
+              'Token of a finished period',
+              <>
+                Rejects with <T>period_complete</T>.
+              </>,
+            ],
+            ['No token at all', 'Protocol-2 behaviour, unchanged.'],
+          ]}
+        />
+        <Note kind="warn">
+          The board remembers the last completed token and will not run it
+          again, including after an <T>estop</T>. Without that, a host that died
+          just before expiry could reconnect, see no active period, replay its{' '}
+          <T>start_period</T> and re-enable the robots after the match was over.
+          A new period always needs a new <T>period_seq</T>.
+        </Note>
+        <p>
+          <strong>Binding to a board.</strong> Every OpenFC enumerates under the
+          same USB name, so on a multi-field event an operator can select the
+          wrong port — and a token cannot catch it, because the token is
+          perfectly valid, just meant for another field. Send the board&apos;s{' '}
+          <T>device_id</T> from <T>hello</T> alongside the token and a mismatch
+          is rejected with <T>wrong_device</T> before anything moves. Binding is
+          sticky: a period started with a <T>device_id</T> can only be resynced
+          or ended by commands that also carry one. <T>estop</T> is never gated
+          on any of this.
+        </p>
+        <p>
+          <strong>Correcting drift.</strong> <T>resync</T> adjusts the deadline
+          of the running period and nothing else — it never enables, disables,
+          changes mode or re-fires a start. Shortening is unrestricted;
+          extending is capped at 2000 ms, because the board&apos;s clock is the
+          more trustworthy of the two. <T>millis()</T> runs off the 40 MHz
+          crystal and drifts on the order of 12 ms across a two-minute period,
+          whereas a backgrounded browser tab has its timers throttled. A host
+          asking for a large extension has a wrong clock, not a longer match.
+        </p>
+      </Section>
+
       <Section id="commands" title="Commands (host → board)">
         <Table
           head={['Command', 'Fields', 'Effect']}
@@ -99,14 +164,30 @@ export default function ProtocolDocs() {
             [
               <T key="c">start_period</T>,
               <>
-                <T>mode</T>, <T>duration_ms</T> (1–600000)
+                <T>mode</T>, <T>duration_ms</T> (1–600000), optional{' '}
+                <T>match_id</T>, <T>period_seq</T>, <T>device_id</T>
               </>,
-              'Atomically enable and start an on-board countdown. Survives host disconnect. Rejected if a period is already running.',
+              'Atomically enable and start an on-board countdown. Survives host disconnect. Rejected if a different period is already running; replaying the token of the running one is a no-op.',
+            ],
+            [
+              <T key="c">resync</T>,
+              <>
+                <T>match_id</T>, <T>period_seq</T>, <T>remaining_ms</T>,
+                optional <T>device_id</T>
+              </>,
+              'Correct the running period’s deadline. Never touches the outputs. Acks with the applied delta_ms.',
+            ],
+            [
+              <T key="c">end_period</T>,
+              <>
+                <T>match_id</T>, <T>period_seq</T>, optional <T>device_id</T>
+              </>,
+              'End the running period early — an operator abort, reported distinguishably from a fault.',
             ],
             [
               <T key="c">estop</T>,
               '—',
-              'Immediately disable and cancel any running period. Always accepted.',
+              'Immediately disable and cancel any running period. Always accepted — never gated on a token or device_id.',
             ],
             [
               <T key="c">identify</T>,
@@ -147,7 +228,9 @@ export default function ProtocolDocs() {
               <>
                 <T>enable</T>, <T>mode</T>, <T>state</T>, <T>uptime_ms</T>, and
                 when a period is running <T>timed</T>, <T>duration_ms</T>,{' '}
-                <T>remaining_ms</T>; <T>diag</T> when set_pin owns the outputs
+                <T>remaining_ms</T>, plus <T>match_id</T>, <T>period_seq</T>,{' '}
+                <T>bound</T> if it is tokenised; <T>diag</T> when set_pin owns
+                the outputs
               </>,
               'After any state change, and in reply to get_state.',
             ],
@@ -159,27 +242,38 @@ export default function ProtocolDocs() {
             [
               <T key="e">timer_state</T>,
               <>
-                <T>active</T>, and when active <T>mode</T>, <T>duration_ms</T>,{' '}
-                <T>remaining_ms</T>, <T>elapsed_ms</T>
+                <T>active</T>; when active <T>mode</T>, <T>duration_ms</T>,{' '}
+                <T>remaining_ms</T>, <T>elapsed_ms</T> and any{' '}
+                <T>match_id</T>, <T>period_seq</T>, <T>bound</T>; when idle,{' '}
+                <T>last_match_id</T> and <T>last_period_seq</T> of the period
+                that most recently finished
               </>,
               'In reply to get_timer.',
             ],
             [
               <T key="e">timer_expired</T>,
               <>
-                <T>mode</T>, <T>duration_ms</T>, <T>elapsed_ms</T>
+                <T>mode</T>, <T>duration_ms</T>, <T>elapsed_ms</T>,{' '}
+                <T>reason</T>: <T>timer</T> | <T>ended</T>; plus the token if
+                the period had one
               </>,
-              'A timed period reached its full duration.',
+              'A timed period finished — either by reaching its duration or via end_period.',
             ],
             [
               <T key="e">estop</T>,
               <>
                 <T>source</T>: <T>software</T> | <T>watchdog</T> | <T>timer</T>
               </>,
-              'Outputs were disabled. Always followed by a state event.',
+              'Outputs were disabled. Always followed by a state event. Not emitted for end_period, which is not a fault.',
             ],
             [<T key="e">pins</T>, <T key="p">pins[]</T>, 'In reply to get_pins.'],
-            [<T key="e">ack</T>, <T key="c">cmd</T>, 'Command accepted.'],
+            [
+              <T key="e">ack</T>,
+              <>
+                <T>cmd</T>; <T>delta_ms</T> on a resync
+              </>,
+              'Command accepted.',
+            ],
             [
               <T key="e">error</T>,
               <>
@@ -215,7 +309,43 @@ export default function ProtocolDocs() {
               <T key="r">timer_active</T>,
               <>
                 <T>set</T>, <T>start_period</T> or <T>set_pin</T> arrived while a
-                timed period owns the outputs. Send <T>estop</T> first.
+                timed period owns the outputs. Send <T>estop</T> first. A{' '}
+                <T>start_period</T> replaying the running period&apos;s own token
+                is exempt — that is a no-op, not a rejection.
+              </>,
+            ],
+            [
+              <T key="r">wrong_device</T>,
+              <>
+                The <T>device_id</T> is not this board&apos;s, or the period is
+                bound and the command carried none.
+              </>,
+            ],
+            [
+              <T key="r">token_mismatch</T>,
+              <>
+                <T>resync</T> or <T>end_period</T> did not name the period that
+                is running — or nothing is running at all.
+              </>,
+            ],
+            [
+              <T key="r">period_complete</T>,
+              <>
+                <T>start_period</T> reused the token of a period that already
+                finished. Use a new <T>period_seq</T>.
+              </>,
+            ],
+            [
+              <T key="r">invalid_token</T>,
+              <>
+                <T>match_id</T> and <T>period_seq</T> were not both present, or{' '}
+                <T>match_id</T> was empty or over 32 characters.
+              </>,
+            ],
+            [
+              <T key="r">resync_out_of_range</T>,
+              <>
+                <T>resync</T> tried to extend the period by more than 2000 ms.
               </>,
             ],
             [
@@ -229,7 +359,8 @@ export default function ProtocolDocs() {
               <T key="r">invalid_duration</T>,
               <>
                 <T>duration_ms</T> was missing, not an integer, or outside
-                1–600000.
+                1–600000; or <T>resync</T> sent a <T>remaining_ms</T> that was
+                missing or not a non-negative integer.
               </>,
             ],
             [
@@ -262,7 +393,7 @@ export default function ProtocolDocs() {
             [
               'Ends when',
               'Host stops talking, or estop',
-              'duration_ms elapses, or estop',
+              'duration_ms elapses, or end_period, or estop',
             ],
           ]}
         />
@@ -289,25 +420,48 @@ export default function ProtocolDocs() {
 
       <Section id="example" title="A complete match">
         <Code label="host → board, board → host">{`>>> {"cmd":"get_info"}
-<<< {"evt":"hello","proto":2,"fw_version":"1.3.0","hw_version":"1.1",
+<<< {"evt":"hello","proto":3,"fw_version":"1.4.0","hw_version":"1.1",
      "device_id":"openfc-494274","fw_hash":"0217fc0d..."}
 
->>> {"cmd":"start_period","mode":"auto","duration_ms":15000}
+>>> {"cmd":"start_period","mode":"auto","duration_ms":15000,
+     "match_id":"qm-42","period_seq":1,"device_id":"openfc-494274"}
 <<< {"evt":"state","enable":true,"mode":"auto","state":"ENABLED_AUTO",
-     "timed":true,"duration_ms":15000,"remaining_ms":15000,"uptime_ms":41230}
+     "timed":true,"duration_ms":15000,"remaining_ms":15000,
+     "match_id":"qm-42","period_seq":1,"bound":true,"uptime_ms":41230}
 <<< {"evt":"ack","cmd":"start_period"}
 
-    ... 15 s later, with no host traffic required ...
+    ... the host page reloads mid-period. The board keeps counting. ...
 
-<<< {"evt":"timer_expired","mode":"auto","duration_ms":15000,"elapsed_ms":15000}
+>>> {"cmd":"get_timer"}
+<<< {"evt":"timer_state","active":true,"mode":"auto","duration_ms":15000,
+     "remaining_ms":6120,"elapsed_ms":8880,"match_id":"qm-42",
+     "period_seq":1,"bound":true}
+
+    Same token, so this re-establishes context instead of restarting:
+>>> {"cmd":"start_period","mode":"auto","duration_ms":15000,
+     "match_id":"qm-42","period_seq":1,"device_id":"openfc-494274"}
+<<< {"evt":"ack","cmd":"start_period"}
+
+    The server's clock says 6.4 s, the board says 6.1 s:
+>>> {"cmd":"resync","match_id":"qm-42","period_seq":1,
+     "remaining_ms":6400,"device_id":"openfc-494274"}
+<<< {"evt":"ack","cmd":"resync","delta_ms":300}
+
+<<< {"evt":"timer_expired","mode":"auto","duration_ms":15300,
+     "elapsed_ms":15300,"reason":"timer","match_id":"qm-42","period_seq":1}
 <<< {"evt":"estop","source":"timer","uptime_ms":56230}
 <<< {"evt":"state","enable":false,"mode":"driver","state":"DISABLED",...}
 
->>> {"cmd":"start_period","mode":"driver","duration_ms":105000}
-    ... driver control runs ...
+    A new period needs a new period_seq; replaying seq 1 is refused:
+>>> {"cmd":"start_period","mode":"driver","duration_ms":105000,
+     "match_id":"qm-42","period_seq":2,"device_id":"openfc-494274"}
+    ... driver control runs, then a referee stops the match early ...
 
->>> {"cmd":"estop"}
-<<< {"evt":"estop","source":"software","uptime_ms":98120}`}</Code>
+>>> {"cmd":"end_period","match_id":"qm-42","period_seq":2,
+     "device_id":"openfc-494274"}
+<<< {"evt":"ack","cmd":"end_period"}
+<<< {"evt":"timer_expired","mode":"driver","duration_ms":105000,
+     "elapsed_ms":31400,"reason":"ended","match_id":"qm-42","period_seq":2}`}</Code>
       </Section>
 
       <Section id="pins" title="Output pin map">

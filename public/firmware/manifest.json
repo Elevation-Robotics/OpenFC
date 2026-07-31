@@ -1,6 +1,17 @@
 {
   "official_releases": [
     {
+      "version": "1.4.0",
+      "released": "2026-07-31",
+      "description": "Protocol 3: period tokens, resync, end_period and device binding",
+      "binary_sha256": "c1a9d01545a1097aa37ecfdbad09358fb31978d4ddd9da2bf78008e7c234f1cb",
+      "app_sha256": "68757492a2dfc2f15d5d2a1206bb07fa821a61b13ad4ea7033efa3713c760dbb",
+      "download_url": "/firmware/openfc-v1.4.0-merged.bin",
+      "certified_for_competition": false,
+      "min_hw_version": "1.1",
+      "changelog": "Protocol revision 3, for hosts that reattach mid-match. start_period takes a match_id/period_seq token: replaying the running period's token is a no-op instead of a restart, a different token is refused while a period runs, and a retired token comes back as period_complete rather than re-enabling the robots after the match. Adds resync (moves the deadline; shortening is unrestricted, extension capped at 2000 ms), end_period (ends a period without an e-stop), and device_id binding, which becomes mandatory once a host uses it so a misrouted command cannot enable another field. Tokens are echoed in state, timer_state and timer_expired so reconnect reconciles in one round trip. E-stop is never gated on any of this. NOT YET CERTIFIED: awaiting hardware verification."
+    },
+    {
       "version": "1.3.0",
       "released": "2026-07-31",
       "description": "Adds get_info and closes the raw-diagnostics watchdog gap",
