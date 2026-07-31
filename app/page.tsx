@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import SiteFooter from '@/components/SiteFooter';
 
 // Product landing page for the OpenFC board. Server-rendered and deliberately
 // serial-free: this is the first page a visitor sees, so it must render without
@@ -65,12 +66,13 @@ export default function Home() {
             an official release.
           </Step>
           <Step n={2} title="Set your periods">
-            Autonomous, driver, or a full match with a transition gap. Durations
-            are yours to pick — 15/90 by default, anything up to 10 minutes.
+            Autonomous, driver, or a full match. Move between periods yourself or
+            on a timed gap. Durations are yours to pick — 15/90 by default,
+            anything up to 10 minutes.
           </Step>
           <Step n={3} title="Run the match">
-            A full-screen countdown drives the field. Press space to stop
-            everything at once.
+            A full-screen countdown drives the field. Enter advances the period,
+            space stops everything at once.
           </Step>
         </ol>
       </section>
@@ -103,23 +105,17 @@ export default function Home() {
       </section>
 
       <section className="mt-16 rounded-lg border border-yellow-800/60 bg-yellow-950/20 p-5 text-sm text-yellow-100/90">
-        <strong className="font-semibold">Not a substitute for the field.</strong>{' '}
-        OpenFC is built for practice and scrimmages. It is not VEX hardware and
-        is not approved for official competition. Keep hands clear of robots
-        whenever the field is enabled.
+        <strong className="font-semibold">Keep the field clear.</strong> OpenFC
+        enables and disables real robots. Keep hands clear whenever the field is
+        enabled, and confirm the board behaves as expected in your setup before
+        relying on it.
       </section>
 
-      <footer className="mt-16 flex flex-col items-center gap-2 border-t border-gray-800 pt-8 text-center text-sm text-gray-500">
-        <p>Requires Chrome, Edge, or Opera — the Web Serial API.</p>
-        <a
-          href="https://github.com/elevationrobotics/openfc"
-          className="text-gray-400 underline hover:text-gray-200"
-          target="_blank"
-          rel="noreferrer"
-        >
-          github.com/elevationrobotics/openfc
-        </a>
-      </footer>
+      <p className="mt-8 text-center text-sm text-gray-500">
+        Requires Chrome, Edge, or Opera — the Web Serial API.
+      </p>
+
+      <SiteFooter />
     </main>
   );
 }

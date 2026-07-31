@@ -6,6 +6,7 @@ import DocsLayout, {
   Section,
   T,
 } from '@/components/docs/DocsLayout';
+import { REPO_URL } from '@/lib/site';
 
 // Docs landing + integration guide: enough to drive the board from another
 // application without reading the firmware source.
@@ -49,6 +50,13 @@ export default function DocsHome() {
               Hardware
             </Link>{' '}
             — schematic, pin map and build notes.
+          </li>
+          <li>
+            <Link href="/docs/license" className="text-blue-400 hover:underline">
+              License
+            </Link>{' '}
+            — Apache-2.0 for software, CERN-OHL-P-2.0 for hardware; free to
+            build, modify and sell.
           </li>
         </ul>
       </Section>
@@ -197,12 +205,12 @@ send(cmd='estop')`}</Code>
         </p>
         <p>
           <a
-            href="https://github.com/elevationrobotics/openfc"
+            href={REPO_URL}
             target="_blank"
             rel="noreferrer"
             className="text-blue-400 hover:underline"
           >
-            github.com/elevationrobotics/openfc
+            {REPO_URL.replace('https://', '')}
           </a>
         </p>
       </Section>

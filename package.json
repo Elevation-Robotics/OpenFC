@@ -3,6 +3,11 @@
   "version": "1.1.0",
   "private": true,
   "description": "OpenFC Web Platform — browser-based firmware flasher and field controller for the OpenFC VEX V5 field controller board",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Elevation-Robotics/OpenFC.git"
+  },
   "scripts": {
     "dev": "npm run generate:api && next dev",
     "generate:api": "node scripts/generate-api.mjs",

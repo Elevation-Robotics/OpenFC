@@ -1,13 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { SerialProvider } from '@/components/SerialProvider';
-
-// The site answers on more than one hostname (openfc.dev and
-// openfc.elevationrobotics.org). Both serve identical content, so pages declare
-// one canonical origin — otherwise search engines treat them as duplicates and
-// shared links resolve inconsistently. Must match OPENFC_BASE_URL, which is what
-// the generated /api/v1 download links point at.
-const SITE_URL = process.env.OPENFC_BASE_URL ?? 'https://openfc.dev';
+import { SITE_URL } from '@/lib/site';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

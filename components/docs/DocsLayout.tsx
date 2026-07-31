@@ -3,12 +3,14 @@
 // indexable) without a board attached.
 
 import Link from 'next/link';
+import SiteFooter from '@/components/SiteFooter';
 
 export const DOCS_NAV = [
   { href: '/docs', label: 'Overview' },
   { href: '/docs/protocol', label: 'Serial protocol' },
   { href: '/docs/api', label: 'Firmware API' },
   { href: '/docs/hardware', label: 'Hardware' },
+  { href: '/docs/license', label: 'License' },
 ];
 
 export default function DocsLayout({
@@ -59,6 +61,8 @@ export default function DocsLayout({
           {children}
         </div>
       </div>
+
+      <SiteFooter />
     </main>
   );
 }

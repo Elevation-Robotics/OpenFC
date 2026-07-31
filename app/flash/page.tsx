@@ -11,6 +11,7 @@ import { useCallback, useState } from 'react';
 import Link from 'next/link';
 import BrowserGate from '@/components/BrowserGate';
 import ConnectButton from '@/components/ConnectButton';
+import SiteFooter from '@/components/SiteFooter';
 import FirmwareVerifier from '@/components/flash/FirmwareVerifier';
 import FirmwareUploader, {
   SelectedFirmware,
@@ -154,6 +155,8 @@ export default function FlashPage() {
       <section className="mt-8">
         <PinDiagnostics />
       </section>
+
+      <SiteFooter />
     </main>
   );
 }

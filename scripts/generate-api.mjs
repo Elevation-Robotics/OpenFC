@@ -23,7 +23,9 @@ const outDir = join(root, 'public', 'api', 'v1', 'firmware');
 // Overridable so a fork or a preview deploy emits its own links.
 const BASE_URL = (process.env.OPENFC_BASE_URL ?? 'https://openfc.dev').replace(/\/$/, '');
 const API_VERSION = 'v1';
-const SOURCE_URL = 'https://github.com/elevationrobotics/openfc';
+// Kept in step with REPO_URL in lib/site.ts; this script is plain node and
+// cannot import the TypeScript module.
+const SOURCE_URL = 'https://github.com/Elevation-Robotics/OpenFC';
 
 const lower = (s) => String(s ?? '').trim().toLowerCase();
 
@@ -127,6 +129,8 @@ async function main() {
           'running an official, competition-certified build.',
         documentation_url: `${BASE_URL}/docs/api/`,
         source_url: SOURCE_URL,
+        license: { software: 'Apache-2.0', hardware: 'CERN-OHL-P-2.0' },
+        license_url: `${BASE_URL}/docs/license/`,
         generated_at,
         endpoints: [
           { path: `/api/${API_VERSION}/firmware/latest.json`, description: 'Newest competition-certified release.' },
