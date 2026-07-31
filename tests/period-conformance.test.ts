@@ -19,6 +19,11 @@ interface BoardFlaws {
   replayRestarts?: boolean;
   /** Run a token that has already finished. */
   forgetsRetired?: boolean;
+  /**
+   * Retire into a single slot matched exactly, so the newest completed period
+   * evicts every earlier one instead of covering it.
+   */
+  singleRetirementSlot?: boolean;
   /** Obey a command addressed to a different device_id. */
   ignoresDeviceId?: boolean;
   /** Let a second host preempt a running period. */
@@ -45,8 +50,9 @@ class FakeBoard {
   private mode = 'auto';
   private duration = 0;
   private startedAt = 0;
-  private retiredId: string | null = null;
-  private retiredSeq: number | null = null;
+  // match_id -> high-water period_seq, as the firmware's retirement slots do.
+  private retired = new Map<string, number>();
+  private retiredRecent: string | null = null;
   private listeners = new Set<(e: OpenFCEvent) => void>();
 
   constructor(private flaws: BoardFlaws = {}) {}
@@ -75,8 +81,19 @@ class FakeBoard {
         ? { match_id: this.matchId, period_seq: this.seq ?? 0 }
         : {}),
     };
-    this.retiredId = this.matchId;
-    this.retiredSeq = this.seq;
+    if (this.matchId !== null) {
+      const seq = this.seq ?? 0;
+      if (this.flaws.singleRetirementSlot) {
+        this.retired.clear();
+        this.retired.set(this.matchId, seq);
+      } else {
+        const known = this.retired.get(this.matchId);
+        if (known === undefined || seq > known) {
+          this.retired.set(this.matchId, seq);
+        }
+      }
+      this.retiredRecent = this.matchId;
+    }
     this.active = false;
     this.matchId = null;
     this.seq = null;
@@ -135,10 +152,10 @@ class FakeBoard {
           : {
               evt: 'timer_state',
               active: false,
-              ...(this.retiredId
+              ...(this.retiredRecent
                 ? {
-                    last_match_id: this.retiredId,
-                    last_period_seq: this.retiredSeq ?? 0,
+                    last_match_id: this.retiredRecent,
+                    last_period_seq: this.retired.get(this.retiredRecent) ?? 0,
                   }
                 : {}),
             },
@@ -184,13 +201,13 @@ class FakeBoard {
         this.err('timer_active', 'start_period');
         return;
       }
-      if (
-        hasId &&
-        !this.flaws.proto2 &&
-        !this.flaws.forgetsRetired &&
-        this.retiredId === id &&
-        this.retiredSeq === seq
-      ) {
+      const mark = this.retired.get(id as string);
+      const covered =
+        mark !== undefined &&
+        (this.flaws.singleRetirementSlot
+          ? seq === mark
+          : (seq as number) <= mark);
+      if (hasId && !this.flaws.proto2 && !this.flaws.forgetsRetired && covered) {
         this.err('period_complete', 'start_period');
         return;
       }
@@ -281,6 +298,14 @@ describe('each guarantee is actually tested', () => {
   it('catches a board that re-runs a finished period', async () => {
     const { by } = await run({ forgetsRetired: true });
     expect(by('retired')?.outcome).toBe('fail');
+  });
+
+  it('catches a board whose retirement holds only one period', async () => {
+    const { by } = await run({ singleRetirementSlot: true });
+    // The single-period check still passes on such a board — nothing has
+    // evicted its token yet — which is exactly why the two-period one exists.
+    expect(by('retired')?.outcome).toBe('pass');
+    expect(by('retired-earlier')?.outcome).toBe('fail');
   });
 
   it('catches a board that ignores device_id', async () => {

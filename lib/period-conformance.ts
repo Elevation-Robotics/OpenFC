@@ -381,6 +381,74 @@ export const CHECKS: Check[] = [
     },
   },
   {
+    id: 'retired-earlier',
+    title: 'An earlier period of the same match stays retired',
+    rationale:
+      'A real match is two periods, not one. If finishing the driver period forgets that auto already ran, a host replaying its auto start_period gets a second autonomous period with the robots enabled — the same re-enable hole, one period further back.',
+    enablesOutputs: true,
+    async run(io) {
+      const matchId = 'conf-two';
+      const first = { matchId, periodSeq: nextSeq() };
+      const second = { matchId, periodSeq: nextSeq() };
+
+      for (const token of [first, second]) {
+        const started = await startProbe(io, token, 'auto', 1200);
+        if (!started || started.evt === 'error') {
+          await safeStop(io);
+          return {
+            outcome: 'fail',
+            detail: `Could not start period ${token.periodSeq}: ${started?.evt === 'error' ? started.reason : 'no reply'}.`,
+          };
+        }
+        if (!(await io.waitFor((e) => e.evt === 'timer_expired', 3000))) {
+          await safeStop(io);
+          return {
+            outcome: 'fail',
+            detail: `No timer_expired for period ${token.periodSeq} within 3 s.`,
+          };
+        }
+      }
+
+      // Replay the *first* period, the one a single retirement slot forgets.
+      const p = io.waitFor(
+        (e) => e.evt === 'error' || isAck('start_period')(e),
+        REPLY_TIMEOUT_MS,
+      );
+      io.send(
+        cmd.startPeriod('auto', 1200, {
+          ...first,
+          deviceId: io.deviceId ?? undefined,
+        }),
+      );
+      const r = await p;
+      if (r && isAck('start_period')(r)) {
+        await safeStop(io);
+        return {
+          outcome: 'fail',
+          detail:
+            'The board re-ran the first period after the second one finished. Retirement only remembers the most recent period, so every earlier period of a match is replayable.',
+        };
+      }
+      if (r && isErr('period_complete')(r)) {
+        const idle = await readTimer(io);
+        const highWater =
+          idle?.evt === 'timer_state' &&
+          idle.last_match_id === matchId &&
+          (idle.last_period_seq ?? 0) >= second.periodSeq;
+        return {
+          outcome: 'pass',
+          detail: highWater
+            ? 'Refused with period_complete, and get_timer reports the match high-water seq.'
+            : 'Refused with period_complete, but get_timer did not report the later seq as the high-water mark.',
+        };
+      }
+      return {
+        outcome: 'fail',
+        detail: r && r.evt === 'error' ? `Wrong reason: ${r.reason}.` : 'No reply.',
+      };
+    },
+  },
+  {
     id: 'resync-shorten',
     title: 'Resync can shorten a period',
     rationale:

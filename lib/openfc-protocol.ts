@@ -94,9 +94,13 @@ export type OpenFCEvent =
       period_seq?: number;
       bound?: boolean;
       /**
-       * Token of the last period to finish, reported when none is running. Tells
-       * a reconnecting host whether the period it was tracking already ended or
-       * never started — the board refuses to run this token again.
+       * The match that most recently finished a period, reported when none is
+       * running. Tells a reconnecting host whether the period it was tracking
+       * already ended or never started — the board refuses to run it again.
+       *
+       * last_period_seq is a high-water mark, not one period's number: every
+       * seq at or below it in last_match_id is retired. Compare with <=, since
+       * a match's auto period is retired by the driver period that follows it.
        */
       last_match_id?: string;
       last_period_seq?: number;

@@ -182,8 +182,9 @@ export class PeriodController {
   }
 
   /**
-   * Begin a period. A fresh `periodSeq` per period is mandatory: the board
-   * refuses to run a token twice, which is what closes the re-enable hole.
+   * Begin a period. A fresh `periodSeq` per period is mandatory, and within a
+   * `matchId` it must increase: the board retires every seq at or below the
+   * highest one it has completed, which is what closes the re-enable hole.
    */
   start(
     mode: BoardMode,
@@ -413,8 +414,17 @@ export class PeriodController {
     // Nothing running. Whether that means "our start never landed" or "our
     // period already finished" is the whole question, and guessing wrong
     // re-enables robots after a match. The board answers it directly: a
-    // retired token matching ours is proof the period ran to its end.
-    if (lastMatchId === t.matchId && lastSeq === t.periodSeq) {
+    // retired token covering ours is proof the period ran to its end.
+    //
+    // last_period_seq is a high-water mark for last_match_id, not the exact
+    // seq of one period, so this compares with <=. A match's auto period is
+    // retired by the driver period that follows it, and reporting only the
+    // latest would leave the earlier one looking like it never ran.
+    if (
+      lastMatchId === t.matchId &&
+      lastSeq !== undefined &&
+      t.periodSeq <= lastSeq
+    ) {
       this.finish('ended', true);
       return;
     }

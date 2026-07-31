@@ -99,7 +99,7 @@ export default function ProtocolDocs() {
               </>,
             ],
             [
-              'Token of a finished period',
+              'Token of a finished period, or an earlier one of the same match',
               <>
                 Rejects with <T>period_complete</T>.
               </>,
@@ -108,11 +108,14 @@ export default function ProtocolDocs() {
           ]}
         />
         <Note kind="warn">
-          The board remembers the last completed token and will not run it
-          again, including after an <T>estop</T>. Without that, a host that died
-          just before expiry could reconnect, see no active period, replay its{' '}
+          The board remembers completed tokens and will not run one again,
+          including after an <T>estop</T>. Without that, a host that died just
+          before expiry could reconnect, see no active period, replay its{' '}
           <T>start_period</T> and re-enable the robots after the match was over.
-          A new period always needs a new <T>period_seq</T>.
+          Retirement is per match and covers every <T>period_seq</T> at or below
+          the highest one completed, so finishing the driver period also closes
+          the auto period before it. A new period always needs a new{' '}
+          <T>period_seq</T>, and sequence numbers must increase within a match.
         </Note>
         <p>
           <strong>Binding to a board.</strong> Every OpenFC enumerates under the
@@ -245,8 +248,10 @@ export default function ProtocolDocs() {
                 <T>active</T>; when active <T>mode</T>, <T>duration_ms</T>,{' '}
                 <T>remaining_ms</T>, <T>elapsed_ms</T> and any{' '}
                 <T>match_id</T>, <T>period_seq</T>, <T>bound</T>; when idle,{' '}
-                <T>last_match_id</T> and <T>last_period_seq</T> of the period
-                that most recently finished
+                <T>last_match_id</T> and <T>last_period_seq</T> — the match
+                that most recently finished a period, and the highest{' '}
+                <T>period_seq</T> retired within it (every seq at or below it is
+                refused)
               </>,
               'In reply to get_timer.',
             ],
@@ -332,7 +337,8 @@ export default function ProtocolDocs() {
               <T key="r">period_complete</T>,
               <>
                 <T>start_period</T> reused the token of a period that already
-                finished. Use a new <T>period_seq</T>.
+                finished, or one at or below the match&apos;s highest completed{' '}
+                <T>period_seq</T>. Use a new, higher <T>period_seq</T>.
               </>,
             ],
             [

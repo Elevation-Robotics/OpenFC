@@ -128,16 +128,34 @@ static uint32_t tokenSeq      = 0;
 // started without a device_id leaves this false and stays unbound.
 static bool     tokenBound    = false;
 
-// The token of the most recently completed period, retained so a reconnecting
-// host cannot replay it and start a fresh period after the match is over — the
-// re-enable hole. Deliberately NOT cleared by estop: an estop followed by a
-// replay of the same start_period is exactly what a confused reconnecting host
-// produces, and re-enabling robots after an emergency stop is the worst
-// available outcome. A new period after an estop needs a new period_seq.
+// Tokens of completed periods, retained so a reconnecting host cannot replay
+// one and start a fresh period after the match is over — the re-enable hole.
+//
+// Retirement is keyed on match_id and holds a high-water period_seq: every seq
+// at or below the recorded one is retired. A single scalar slot was not enough,
+// because in a two-period match the driver period's retirement would evict the
+// auto period's, and a host replaying auto's start_period afterwards would find
+// nothing to refuse it and run a second 15 s auto period with robots enabled —
+// the same hole, one period further back. A high-water mark closes every
+// earlier period in the match at no extra cost, and the several slots cover
+// replays from earlier matches.
+//
+// Deliberately NOT cleared by estop: an estop followed by a replay of the same
+// start_period is exactly what a confused reconnecting host produces, and
+// re-enabling robots after an emergency stop is the worst available outcome. A
+// new period after an estop needs a new period_seq.
 // Cleared only by reboot (these are zero-initialised at boot).
-static bool     retiredValid  = false;
-static String   retiredMatchId;
-static uint32_t retiredSeq    = 0;
+static const size_t RETIRED_SLOTS = 4;
+struct RetiredMatch {
+    bool     valid  = false;
+    String   matchId;
+    uint32_t maxSeq = 0;
+};
+static RetiredMatch retired[RETIRED_SLOTS];
+// Round-robin victim when a new match needs a slot, and the slot holding the
+// most recently retired period (what emitTimerState reports).
+static size_t retiredNext   = 0;
+static int    retiredRecent = -1;
 
 static String inputBuf;
 
@@ -343,14 +361,48 @@ static void startPeriod(const String& mode, uint32_t durationMs,
     serializeJson(ack, Serial); Serial.println();
 }
 
-// Move the active period's token to the retired slot, so replaying it can never
-// start a second period. See the retired* declarations for why estop does this
-// too, and why nothing but a reboot clears it.
+// True if this token names a period that has already completed. Any seq at or
+// below the match's high-water mark counts: periods advance monotonically
+// within a match, so an earlier seq is necessarily an earlier period.
+static bool isRetiredToken(const String& matchId, uint32_t seq) {
+    for (size_t i = 0; i < RETIRED_SLOTS; i++) {
+        if (retired[i].valid && retired[i].matchId == matchId) {
+            return seq <= retired[i].maxSeq;
+        }
+    }
+    return false;
+}
+
+// Retire the active period's token, so replaying it — or any earlier period of
+// the same match — can never start a second period. See the retired[]
+// declarations for why estop does this too, and why nothing but a reboot
+// clears it.
 static void retirePeriodToken() {
     if (tokenValid) {
-        retiredValid   = true;
-        retiredMatchId = tokenMatchId;
-        retiredSeq     = tokenSeq;
+        int slot = -1;
+        for (size_t i = 0; i < RETIRED_SLOTS; i++) {
+            if (retired[i].valid && retired[i].matchId == tokenMatchId) {
+                slot = (int)i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            // Prefer a free slot; otherwise evict round-robin, which retires
+            // the oldest match rather than the one in progress.
+            for (size_t i = 0; i < RETIRED_SLOTS && slot < 0; i++) {
+                if (!retired[i].valid) slot = (int)i;
+            }
+            if (slot < 0) {
+                slot = (int)retiredNext;
+                retiredNext = (retiredNext + 1) % RETIRED_SLOTS;
+            }
+            retired[slot].valid   = true;
+            retired[slot].matchId = tokenMatchId;
+            retired[slot].maxSeq  = tokenSeq;
+        } else if (tokenSeq > retired[slot].maxSeq) {
+            retired[slot].maxSeq = tokenSeq;
+        }
+        retiredRecent = slot;
     }
     tokenValid = false;
     tokenBound = false;
@@ -507,8 +559,7 @@ static void handleCommand(const JsonDocument& doc) {
         // period: without this, a host that died just before expiry reconnects,
         // sees no active period, replays its start_period and re-enables the
         // robots after the match is over.
-        if (hasToken && retiredValid &&
-            retiredMatchId == matchId && retiredSeq == seq) {
+        if (hasToken && isRetiredToken(matchId, seq)) {
             emitError("period_complete", "start_period"); return;
         }
 
@@ -696,9 +747,13 @@ static void emitTimerState() {
             doc["period_seq"] = tokenSeq;
             doc["bound"] = tokenBound;
         }
-    } else if (retiredValid) {
-        doc["last_match_id"] = retiredMatchId;
-        doc["last_period_seq"] = retiredSeq;
+    } else if (retiredRecent >= 0) {
+        // The most recently retired period. A host reconciling an earlier
+        // period of the same match will not see its own seq here, so it must
+        // compare with <= rather than == — last_period_seq is a high-water
+        // mark for last_match_id, not just the final period's number.
+        doc["last_match_id"] = retired[retiredRecent].matchId;
+        doc["last_period_seq"] = retired[retiredRecent].maxSeq;
     }
     serializeJson(doc, Serial); Serial.println();
 }
