@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// OpenFC v1.2 — main firmware
+// OpenFC v1.4 — main firmware
 //
 // ESP32-S3 firmware for a 4-port USB-powered VEX V5 field controller.
 //
@@ -29,6 +29,16 @@
 //     computed at runtime (no build-time embedding, so no circular hash).
 //   - ESP32 Task Watchdog Timer (TWDT) backstop = duration_ms + 10s during a
 //     timed period, so a firmware hang still disables the robots.
+//
+// Proto 3 adds period tokens, for hosts that lose and re-establish the link
+// mid-match (a page reload, a reconnect, a replug). A period is identified by
+// (match_id, period_seq), so a reconnecting host can replay start_period to say
+// "this is the period you are already running" instead of asking for a new one,
+// and the board can tell that apart from a genuinely new period. Alongside:
+//   - resync:     adjust a running period's deadline, outputs untouched.
+//   - end_period: operator abort, reported distinguishably from a fault.
+//   - device_id binding, so a host that selected the wrong serial port on a
+//     multi-field event cannot enable another field's robots.
 //
 // Output polarity & pins live in openfc_pins.h. All 4 ports move in unison.
 // Boots into a SAFE (Disabled) state; see the safety notes in openfc_pins.h.
@@ -104,6 +114,31 @@ static uint32_t timerDuration = 0;   // ms
 static uint32_t timerStartMs  = 0;   // millis() at start
 static bool     twdtActive    = false;
 
+// Period token (proto 3). Valid only while timerActive; tokenValid records
+// whether the host that started the period supplied one at all, since a legacy
+// host starts an untokenised period that must keep behaving as it did in v2.
+static bool     tokenValid    = false;
+static String   tokenMatchId;
+static uint32_t tokenSeq      = 0;
+
+// Device binding (proto 3). Latched when a period starts WITH a device_id, and
+// then required on every command that affects that period. Fail closed: a host
+// that proved which board it meant must keep proving it, so a second host that
+// picked the wrong port cannot resync or end someone else's match. A period
+// started without a device_id leaves this false and stays unbound.
+static bool     tokenBound    = false;
+
+// The token of the most recently completed period, retained so a reconnecting
+// host cannot replay it and start a fresh period after the match is over — the
+// re-enable hole. Deliberately NOT cleared by estop: an estop followed by a
+// replay of the same start_period is exactly what a confused reconnecting host
+// produces, and re-enabling robots after an emergency stop is the worst
+// available outcome. A new period after an estop needs a new period_seq.
+// Cleared only by reboot (these are zero-initialised at boot).
+static bool     retiredValid  = false;
+static String   retiredMatchId;
+static uint32_t retiredSeq    = 0;
+
 static String inputBuf;
 
 // Raw-output shadow for diagnostics (get_pins/set_pin). Index 0..3 = AD1..AD4,
@@ -130,8 +165,11 @@ static void handleCommand(const JsonDocument& doc);
 static void emitState();
 static void emitHello();
 static void emitEstop(const char* source);
-static void startPeriod(const String& mode, uint32_t durationMs);
+static void startPeriod(const String& mode, uint32_t durationMs,
+                        bool hasToken, const String& matchId, uint32_t seq,
+                        bool bind);
 static void endPeriod(const char* reason, uint32_t elapsedMs);
+static void retirePeriodToken();
 static void emitTimerState();
 static void emitError(const char* reason, const char* cmd);
 static void emitPins();
@@ -189,7 +227,7 @@ void loop() {
         char c = (char) Serial.read();
         if (c == '\n' || c == '\r') {
             if (inputBuf.length() > 0) {
-                StaticJsonDocument<256> doc;
+                JsonDocument doc;
                 DeserializationError err = deserializeJson(doc, inputBuf);
                 if (err) {
                     emitError("parse_error", nullptr);
@@ -232,7 +270,7 @@ void loop() {
     // Heartbeat
     if (now - lastHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
         lastHeartbeatMs = now;
-        StaticJsonDocument<96> hb;
+        JsonDocument hb;
         hb["evt"] = "heartbeat";
         hb["uptime_ms"] = now;
         serializeJson(hb, Serial);
@@ -279,7 +317,9 @@ static void enforceState(State s) {
 }
 
 // ─── Timed period (spec §4.2, §5.1) ───
-static void startPeriod(const String& mode, uint32_t durationMs) {
+static void startPeriod(const String& mode, uint32_t durationMs,
+                        bool hasToken, const String& matchId, uint32_t seq,
+                        bool bind) {
     // Atomic enable + countdown start. Suspends the comms watchdog implicitly
     // (the watchdog check is skipped while timerActive is true).
     timerActive   = true;
@@ -287,26 +327,41 @@ static void startPeriod(const String& mode, uint32_t durationMs) {
     timerDuration = durationMs;
     timerStartMs  = millis();
 
+    tokenValid    = hasToken;
+    tokenMatchId  = hasToken ? matchId : String();
+    tokenSeq      = hasToken ? seq : 0;
+    tokenBound    = hasToken && bind;
+
     // TWDT backstop: duration + 10s. Resets the chip if the firmware hangs.
     twdtBegin(durationMs + TWDT_BACKSTOP_MS);
 
     enforceState(mode == "auto" ? State::S_ENABLED_AUTO : State::S_ENABLED_DRIVER);
 
-    StaticJsonDocument<160> st;
-    st["evt"] = "state";
-    st["enable"] = true;
-    st["mode"] = mode;
-    st["state"] = stateName(currentState);
-    st["timed"] = true;
-    st["duration_ms"] = durationMs;
-    st["remaining_ms"] = durationMs;
-    st["uptime_ms"] = millis();
-    serializeJson(st, Serial); Serial.println();
+    emitState();
 
-    StaticJsonDocument<64> ack; ack["evt"]="ack"; ack["cmd"]="start_period";
+    JsonDocument ack; ack["evt"]="ack"; ack["cmd"]="start_period";
     serializeJson(ack, Serial); Serial.println();
 }
 
+// Move the active period's token to the retired slot, so replaying it can never
+// start a second period. See the retired* declarations for why estop does this
+// too, and why nothing but a reboot clears it.
+static void retirePeriodToken() {
+    if (tokenValid) {
+        retiredValid   = true;
+        retiredMatchId = tokenMatchId;
+        retiredSeq     = tokenSeq;
+    }
+    tokenValid = false;
+    tokenBound = false;
+    tokenMatchId = String();
+    tokenSeq = 0;
+}
+
+// reason is "timer" (ran to completion) or "ended" (operator abort via
+// end_period). Both disable the outputs; only expiry is an estop. An abort is a
+// deliberate act, not a fault, and a host that surfaced it as one would show a
+// hardware alarm every time a referee stopped a match early.
 static void endPeriod(const char* reason, uint32_t elapsedMs) {
     String modeStr = timerMode;
     uint32_t duration = timerDuration;
@@ -314,19 +369,96 @@ static void endPeriod(const char* reason, uint32_t elapsedMs) {
     enforceState(State::S_DISABLED);
     twdtEnd();
 
-    if (strcmp(reason, "timer") == 0) {
-        StaticJsonDocument<128> te;
-        te["evt"] = "timer_expired";
-        te["mode"] = modeStr;
-        te["duration_ms"] = duration;
-        te["elapsed_ms"] = elapsedMs;
-        serializeJson(te, Serial); Serial.println();
-        emitEstop("timer");
+    JsonDocument te;
+    te["evt"] = "timer_expired";
+    te["mode"] = modeStr;
+    te["duration_ms"] = duration;
+    te["elapsed_ms"] = elapsedMs;
+    te["reason"] = reason;
+    if (tokenValid) {
+        te["match_id"] = tokenMatchId;
+        te["period_seq"] = tokenSeq;
     }
+    serializeJson(te, Serial); Serial.println();
 
+    if (strcmp(reason, "timer") == 0) emitEstop("timer");
+
+    retirePeriodToken();
     timerActive = false;
     timerDuration = 0;
     emitState();
+}
+
+// ─── Proto-3 token helpers ───
+
+// Remaining time on the active period, 0 once it has run out.
+static uint32_t periodRemaining(uint32_t now) {
+    uint32_t elapsed = now - timerStartMs;
+    return elapsed >= timerDuration ? 0 : timerDuration - elapsed;
+}
+
+// Reads and validates match_id/period_seq. Returns false and emits
+// invalid_token if they are malformed or only one of the pair is present.
+// present=false with a true return means a legacy, untokenised command.
+static bool readToken(const JsonDocument& doc, const char* cmd, bool* present,
+                      String* matchId, uint32_t* seq) {
+    const bool hasId  = doc["match_id"].is<const char*>();
+    // is<uint32_t> rejects negatives and out-of-range values outright.
+    const bool hasSeq = doc["period_seq"].is<uint32_t>();
+    if (!hasId && !hasSeq) { *present = false; return true; }
+    if (hasId != hasSeq) { emitError("invalid_token", cmd); return false; }
+
+    String id = doc["match_id"].as<const char*>();
+    if (id.length() == 0 || id.length() > MATCH_ID_MAX_LEN) {
+        emitError("invalid_token", cmd); return false;
+    }
+    *present = true;
+    *matchId = id;
+    *seq = doc["period_seq"].as<uint32_t>();
+    return true;
+}
+
+// device_id binding. A command carrying a device_id that is not ours is never
+// obeyed: on a multi-field event every board enumerates under the same USB
+// name, so selecting the wrong port is the one mistake tokens cannot catch —
+// the token is valid, it is simply meant for another board.
+//
+// Fail closed on the way back: once a period is bound, a command that affects
+// it must keep naming the board. Otherwise a host that proved its identity to
+// start the match could have that match resynced or ended by a second host that
+// picked the wrong port and sends no device_id at all.
+//
+// estop deliberately never calls this. Refusing to disable robots because the
+// wrong page asked is not a safety property worth having.
+static bool checkDevice(const JsonDocument& doc, const char* cmd,
+                        bool bindingApplies) {
+    if (doc["device_id"].is<const char*>()) {
+        if (getDeviceId() != doc["device_id"].as<const char*>()) {
+            emitError("wrong_device", cmd);
+            return false;
+        }
+        return true;
+    }
+    if (bindingApplies && timerActive && tokenBound) {
+        emitError("wrong_device", cmd);
+        return false;
+    }
+    return true;
+}
+
+// Shared token check for resync/end_period: the command must name exactly the
+// period that is running.
+static bool requireActiveToken(const JsonDocument& doc, const char* cmd) {
+    bool present = false;
+    String matchId;
+    uint32_t seq = 0;
+    if (!readToken(doc, cmd, &present, &matchId, &seq)) return false;
+    if (!present || !timerActive || !tokenValid ||
+        tokenMatchId != matchId || tokenSeq != seq) {
+        emitError("token_mismatch", cmd);
+        return false;
+    }
+    return true;
 }
 
 // ─── Command dispatch ───
@@ -346,12 +478,40 @@ static void handleCommand(const JsonDocument& doc) {
         else if (enable)                       enforceState(State::S_ENABLED_DRIVER);
         else                                   enforceState(State::S_DISABLED);
 
-        StaticJsonDocument<64> ack; ack["evt"]="ack"; ack["cmd"]="set";
+        JsonDocument ack; ack["evt"]="ack"; ack["cmd"]="set";
         serializeJson(ack, Serial); Serial.println();
         emitState();
 
     } else if (strcmp(cmd, "start_period") == 0) {
+        if (!checkDevice(doc, "start_period", true)) return;
+
+        bool hasToken = false;
+        String matchId;
+        uint32_t seq = 0;
+        if (!readToken(doc, "start_period", &hasToken, &matchId, &seq)) return;
+
+        if (hasToken && timerActive && tokenValid &&
+            tokenMatchId == matchId && tokenSeq == seq) {
+            // The host is replaying the token of the period we are already
+            // running — it reconnected and is re-establishing context, not
+            // asking for a new period. Ack without touching the countdown or
+            // re-firing the enable. Duration corrections go through resync.
+            JsonDocument ack; ack["evt"]="ack"; ack["cmd"]="start_period";
+            serializeJson(ack, Serial); Serial.println();
+            emitState();
+            return;
+        }
         if (timerActive) { emitError("timer_active", "start_period"); return; }
+
+        // A token that already ran to completion must not start a second
+        // period: without this, a host that died just before expiry reconnects,
+        // sees no active period, replays its start_period and re-enables the
+        // robots after the match is over.
+        if (hasToken && retiredValid &&
+            retiredMatchId == matchId && retiredSeq == seq) {
+            emitError("period_complete", "start_period"); return;
+        }
+
         const char* mode = doc["mode"] | "";
         String modeStr(mode);
         if (modeStr != "driver" && modeStr != "auto") {
@@ -364,14 +524,67 @@ static void handleCommand(const JsonDocument& doc) {
         if (duration < (long)PERIOD_MIN_MS || duration > (long)PERIOD_MAX_MS) {
             emitError("invalid_duration", "start_period"); return;
         }
-        startPeriod(modeStr, (uint32_t)duration);
+        startPeriod(modeStr, (uint32_t)duration, hasToken, matchId, seq,
+                    doc["device_id"].is<const char*>());
+
+    } else if (strcmp(cmd, "resync") == 0) {
+        // Correct the deadline of the running period against the host's
+        // authoritative clock. Deliberately inert on the outputs: it never
+        // enables, disables, changes mode or re-fires a start.
+        if (!checkDevice(doc, "resync", true)) return;
+        if (!requireActiveToken(doc, "resync")) return;
+        if (!doc["remaining_ms"].is<uint32_t>()) {
+            emitError("invalid_duration", "resync"); return;
+        }
+        uint32_t wanted = doc["remaining_ms"].as<uint32_t>();
+        uint32_t now = millis();
+        uint32_t current = periodRemaining(now);
+
+        // Asymmetric on purpose. Shortening a period is always safe, so it is
+        // unrestricted; extending one keeps robots live past when the match
+        // says they should be, so it is capped. A host asking for a large
+        // extension has a wrong clock, not a longer match.
+        if (wanted > current && (wanted - current) > RESYNC_EXTEND_MAX_MS) {
+            emitError("resync_out_of_range", "resync"); return;
+        }
+        uint32_t elapsed = now - timerStartMs;
+        if (elapsed > timerDuration) elapsed = timerDuration;
+        timerDuration = elapsed + wanted;
+        twdtBegin(wanted + TWDT_BACKSTOP_MS);
+
+        JsonDocument ack;
+        ack["evt"] = "ack";
+        ack["cmd"] = "resync";
+        ack["delta_ms"] = (int32_t)wanted - (int32_t)current;
+        serializeJson(ack, Serial); Serial.println();
+
+    } else if (strcmp(cmd, "end_period") == 0) {
+        // Operator abort (a referee stopping a match early). Ends the period
+        // and disables, but reports reason:"ended" rather than an estop so the
+        // host does not surface a deliberate act as a hardware fault.
+        if (!checkDevice(doc, "end_period", true)) return;
+        if (!requireActiveToken(doc, "end_period")) return;
+        uint32_t elapsed = millis() - timerStartMs;
+        if (elapsed > timerDuration) elapsed = timerDuration;
+
+        JsonDocument ack; ack["evt"]="ack"; ack["cmd"]="end_period";
+        serializeJson(ack, Serial); Serial.println();
+        endPeriod("ended", elapsed);
 
     } else if (strcmp(cmd, "get_timer") == 0) {
         emitTimerState();
 
     } else if (strcmp(cmd, "estop") == 0) {
-        // Immediate disable in both manual and timed modes.
-        if (timerActive) { timerActive = false; timerDuration = 0; twdtEnd(); }
+        // Immediate disable in both manual and timed modes. Never gated on
+        // device_id or a token: anything that can reach the board is allowed to
+        // stop the robots, and a rejected estop is a far worse failure than one
+        // delivered to the wrong field.
+        if (timerActive) {
+            retirePeriodToken();
+            timerActive = false;
+            timerDuration = 0;
+            twdtEnd();
+        }
         enforceState(State::S_DISABLED);
         emitEstop("software");
         emitState();
@@ -388,7 +601,7 @@ static void handleCommand(const JsonDocument& doc) {
         digitalWrite(pin, level);
         outShadow[idx] = level;
         diagActive = true;
-        StaticJsonDocument<64> ack; ack["evt"]="ack"; ack["cmd"]="set_pin";
+        JsonDocument ack; ack["evt"]="ack"; ack["cmd"]="set_pin";
         serializeJson(ack, Serial); Serial.println();
         emitPins();
         // The host needs the diag flag to know it must now feed the watchdog.
@@ -408,14 +621,14 @@ static void handleCommand(const JsonDocument& doc) {
     } else if (strcmp(cmd, "identify") == 0) {
         identifying = true;
         identifyEndMs = millis() + IDENTIFY_DURATION_MS;
-        StaticJsonDocument<64> ack; ack["evt"]="ack"; ack["cmd"]="identify";
+        JsonDocument ack; ack["evt"]="ack"; ack["cmd"]="identify";
         serializeJson(ack, Serial); Serial.println();
 
     } else if (strcmp(cmd, "ping") == 0) {
         // Keepalive. Like every command it refreshes the comms watchdog above,
         // which is what keeps a manual enable (or raw set_pin diagnostic) alive.
         // During a timed period the watchdog is suspended, so pings are inert.
-        StaticJsonDocument<64> ack; ack["evt"]="ack"; ack["cmd"]="ping";
+        JsonDocument ack; ack["evt"]="ack"; ack["cmd"]="ping";
         serializeJson(ack, Serial); Serial.println();
 
     } else {
@@ -424,8 +637,13 @@ static void handleCommand(const JsonDocument& doc) {
 }
 
 // ─── Event emitters ───
+// These use a heap-backed JsonDocument rather than a fixed-capacity one. The
+// token fields push the worst case (32-char match_id plus period_seq, every
+// optional field present) past the old StaticJsonDocument sizes, and
+// ArduinoJson truncates silently on overflow rather than erroring — the failure
+// would surface as an intermittently malformed event, not a crash.
 static void emitHello() {
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     doc["evt"] = "hello";
     doc["proto"] = OPENFC_PROTO_VERSION;
     doc["fw_version"] = OPENFC_FW_VERSION;
@@ -436,7 +654,7 @@ static void emitHello() {
 }
 
 static void emitState() {
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     doc["evt"] = "state";
     doc["enable"] = reportedEnabled;
     doc["mode"] = currentMode;
@@ -445,18 +663,25 @@ static void emitState() {
     // host so it does not trust `enable`/`mode` blindly.
     if (diagActive) doc["diag"] = true;
     if (timerActive) {
-        uint32_t elapsed = millis() - timerStartMs;
-        uint32_t remaining = elapsed >= timerDuration ? 0 : timerDuration - elapsed;
         doc["timed"] = true;
         doc["duration_ms"] = timerDuration;
-        doc["remaining_ms"] = remaining;
+        doc["remaining_ms"] = periodRemaining(millis());
+        if (tokenValid) {
+            doc["match_id"] = tokenMatchId;
+            doc["period_seq"] = tokenSeq;
+            doc["bound"] = tokenBound;
+        }
     }
     doc["uptime_ms"] = millis();
     serializeJson(doc, Serial); Serial.println();
 }
 
+// The reconciliation path: a reconnecting host must learn from one round trip
+// which period the board thinks it is running and how much of it is left. When
+// nothing is running, the retired token answers the other half of the question
+// — "did the period I was tracking already finish, or did it never start?".
 static void emitTimerState() {
-    StaticJsonDocument<160> doc;
+    JsonDocument doc;
     doc["evt"] = "timer_state";
     doc["active"] = timerActive;
     if (timerActive) {
@@ -466,22 +691,30 @@ static void emitTimerState() {
         doc["duration_ms"] = timerDuration;
         doc["remaining_ms"] = timerDuration - elapsed;
         doc["elapsed_ms"] = elapsed;
+        if (tokenValid) {
+            doc["match_id"] = tokenMatchId;
+            doc["period_seq"] = tokenSeq;
+            doc["bound"] = tokenBound;
+        }
+    } else if (retiredValid) {
+        doc["last_match_id"] = retiredMatchId;
+        doc["last_period_seq"] = retiredSeq;
     }
     serializeJson(doc, Serial); Serial.println();
 }
 
 static void emitPins() {
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["evt"] = "pins";
-    JsonArray arr = doc.createNestedArray("pins");
+    JsonArray arr = doc["pins"].to<JsonArray>();
     for (int i = 0; i < 4; i++) {
-        JsonObject o = arr.createNestedObject();
+        JsonObject o = arr.add<JsonObject>();
         o["pin"]   = PINS_AD[i];
         o["label"] = PIN_LABELS[i];
         o["value"] = (outShadow[i] == HIGH);
     }
     for (int i = 0; i < 4; i++) {
-        JsonObject o = arr.createNestedObject();
+        JsonObject o = arr.add<JsonObject>();
         o["pin"]   = PINS_ED[i];
         o["label"] = PIN_LABELS[4 + i];
         o["value"] = (outShadow[4 + i] == HIGH);
@@ -490,7 +723,7 @@ static void emitPins() {
 }
 
 static void emitEstop(const char* source) {
-    StaticJsonDocument<96> doc;
+    JsonDocument doc;
     doc["evt"] = "estop";
     doc["source"] = source;
     doc["uptime_ms"] = millis();
@@ -498,7 +731,7 @@ static void emitEstop(const char* source) {
 }
 
 static void emitError(const char* reason, const char* cmd) {
-    StaticJsonDocument<128> e;
+    JsonDocument e;
     e["evt"] = "error";
     e["reason"] = reason;
     if (cmd) e["cmd"] = cmd;

@@ -88,3 +88,17 @@ static const uint32_t IDENTIFY_DURATION_MS  = 3000;
 static const uint32_t PERIOD_MIN_MS    = 1;
 static const uint32_t PERIOD_MAX_MS    = 600000;   // 10 minutes
 static const uint32_t TWDT_BACKSTOP_MS = 10000;    // duration_ms + this = TWDT
+
+// ─── Period tokens (proto 3) ──────────────────────────────────────────────
+// A period is identified by (match_id, period_seq). A host that reattaches
+// mid-match replays its token to prove it is talking about the period the board
+// is already running, rather than asking for a new one.
+static const size_t   MATCH_ID_MAX_LEN = 32;
+
+// resync may shorten a period without limit but may only extend it by this
+// much. Shortening is always safe; extending keeps robots live longer than the
+// match intends, so a host whose clock has drifted must not be able to do it.
+// The board's own clock is far more trustworthy than the host's: millis() is
+// backed by esp_timer off the 40 MHz crystal (~12 ms of drift over a 120 s
+// period at +/-100 ppm), whereas a backgrounded browser tab is throttled.
+static const uint32_t RESYNC_EXTEND_MAX_MS = 2000;
