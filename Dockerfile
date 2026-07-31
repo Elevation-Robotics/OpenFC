@@ -4,7 +4,8 @@
 # image: stage 1 produces ./out, stage 2 is just nginx and static files.
 #
 # Coolify: set the build pack to Dockerfile. No build arguments are required —
-# OPENFC_BASE_URL only needs setting on a fork or a preview deploy.
+# OPENFC_BASE_URL only needs setting on a fork or a preview deploy. The server
+# answers on both 80 and 3000, so either value of "Ports Exposes" works.
 
 # ---- build ------------------------------------------------------------------
 FROM node:20-alpine AS build
@@ -49,7 +50,7 @@ COPY --from=build /app/out        /usr/share/nginx/html
 # Surfaces a bad config at build time instead of on a crash-looping deploy.
 RUN nginx -t
 
-EXPOSE 80
+EXPOSE 80 3000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- http://127.0.0.1/healthz || exit 1
