@@ -23,6 +23,7 @@ import {
   BoardState,
   OpenFCEvent,
   PROTO_LEGACY,
+  PeriodAddress,
   PinState,
   cmd,
 } from '@/lib/openfc-protocol';
@@ -37,7 +38,32 @@ export interface TimedPeriod {
   mode: BoardMode | null;
   durationMs: number;
   remainingMs: number;
+  /** Token of the running period (proto 3); null when untokenised or idle. */
+  matchId: string | null;
+  periodSeq: number | null;
+  /** The board requires a device_id on commands for this period. */
+  bound: boolean;
+  /**
+   * Token of the last period to finish, reported by the board while idle. A
+   * reconnecting host uses this to tell "my start_period was lost" apart from
+   * "my match already ended" — the distinction that decides whether replaying
+   * it would re-enable robots after the match.
+   */
+  lastMatchId: string | null;
+  lastPeriodSeq: number | null;
 }
+
+const NO_PERIOD: TimedPeriod = {
+  active: false,
+  mode: null,
+  durationMs: 0,
+  remainingMs: 0,
+  matchId: null,
+  periodSeq: null,
+  bound: false,
+  lastMatchId: null,
+  lastPeriodSeq: null,
+};
 
 export interface SerialState {
   connected: boolean;
@@ -80,7 +106,7 @@ const initialState: SerialState = {
   needsUserGesture: false,
   boardState: null,
   diag: false,
-  timedPeriod: { active: false, mode: null, durationMs: 0, remainingMs: 0 },
+  timedPeriod: NO_PERIOD,
   verification: null,
   pinStates: null,
 };
@@ -155,31 +181,57 @@ function applyEvent(state: SerialState, evt: OpenFCEvent): SerialState {
         ...state,
         boardState: evt.state,
         diag: evt.diag === true,
+        // state says nothing about a retired token, so its idle case must not
+        // clear one already learned from timer_state.
         timedPeriod: evt.timed
           ? {
+              ...NO_PERIOD,
               active: true,
               mode: evt.mode,
               durationMs: evt.duration_ms ?? 0,
               remainingMs: evt.remaining_ms ?? 0,
+              matchId: evt.match_id ?? null,
+              periodSeq: evt.period_seq ?? null,
+              bound: evt.bound === true,
+              lastMatchId: state.timedPeriod.lastMatchId,
+              lastPeriodSeq: state.timedPeriod.lastPeriodSeq,
             }
-          : { active: false, mode: null, durationMs: 0, remainingMs: 0 },
+          : {
+              ...NO_PERIOD,
+              lastMatchId: state.timedPeriod.lastMatchId,
+              lastPeriodSeq: state.timedPeriod.lastPeriodSeq,
+            },
       };
     case 'timer_state':
       return {
         ...state,
         timedPeriod: evt.active
           ? {
+              ...NO_PERIOD,
               active: true,
               mode: (evt.mode as BoardMode) ?? null,
               durationMs: evt.duration_ms ?? 0,
               remainingMs: evt.remaining_ms ?? 0,
+              matchId: evt.match_id ?? null,
+              periodSeq: evt.period_seq ?? null,
+              bound: evt.bound === true,
             }
-          : { active: false, mode: null, durationMs: 0, remainingMs: 0 },
+          : {
+              ...NO_PERIOD,
+              lastMatchId: evt.last_match_id ?? null,
+              lastPeriodSeq: evt.last_period_seq ?? null,
+            },
       };
     case 'timer_expired':
+      // The board retires the token here, so record it: this is what stops a
+      // later replay from being mistaken for a lost start_period.
       return {
         ...state,
-        timedPeriod: { active: false, mode: null, durationMs: 0, remainingMs: 0 },
+        timedPeriod: {
+          ...NO_PERIOD,
+          lastMatchId: evt.match_id ?? state.timedPeriod.matchId,
+          lastPeriodSeq: evt.period_seq ?? state.timedPeriod.periodSeq,
+        },
       };
     case 'pins':
       return { ...state, pinStates: evt.pins };
@@ -379,8 +431,14 @@ export function useSerialCommands() {
       identify: () => send(cmd.identify()),
       set: (enable: boolean, mode: BoardMode) => send(cmd.set(enable, mode)),
       estop: () => send(cmd.estop()),
-      startPeriod: (mode: BoardMode, durationMs: number) =>
-        send(cmd.startPeriod(mode, durationMs)),
+      // `addr` carries the proto-3 token and device binding. Omit it only for
+      // a board on an older protocol; with it, a replay of the same token is
+      // recognised rather than treated as a request for a new period.
+      startPeriod: (mode: BoardMode, durationMs: number, addr?: PeriodAddress) =>
+        send(cmd.startPeriod(mode, durationMs, addr)),
+      resync: (addr: PeriodAddress, remainingMs: number) =>
+        send(cmd.resync(addr, remainingMs)),
+      endPeriod: (addr: PeriodAddress) => send(cmd.endPeriod(addr)),
       setPin: (pin: number, value: boolean) => send(cmd.setPin(pin, value)),
       getPins: () => send(cmd.getPins()),
     }),
