@@ -64,9 +64,9 @@ export default function OfficialFirmwareCard({ onFlash, busy }: Props) {
     <div className="rounded-xl border border-gray-700 bg-gray-900/50 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Official Firmware</h2>
+          <h2 className="text-lg font-semibold">Official Firmware · V1 board</h2>
           <p className="mt-0.5 text-sm text-gray-400">
-            v{release.version} · released {release.released}
+            v{release.version} · released {release.released} · V1 board only
           </p>
         </div>
         {upToDate && (

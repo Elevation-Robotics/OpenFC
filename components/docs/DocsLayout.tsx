@@ -10,6 +10,7 @@ export const DOCS_NAV = [
   { href: '/docs/protocol', label: 'Serial protocol' },
   { href: '/docs/api', label: 'Firmware API' },
   { href: '/docs/hardware', label: 'Hardware' },
+  { href: '/docs/v1_3', label: 'V1.3 dual-MCU board' },
   { href: '/docs/license', label: 'License' },
 ];
 

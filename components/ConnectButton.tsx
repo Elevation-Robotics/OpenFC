@@ -2,12 +2,21 @@
 
 // Reusable connect/disconnect control with status. See spec §11.
 
+import { useEffect, useState } from 'react';
 import { useSerial } from './SerialProvider';
 import { isWebSerialSupported } from '@/lib/serial';
 
 export default function ConnectButton() {
   const { state, connect, reconnect, disconnect } = useSerial();
-  const supported = isWebSerialSupported();
+  // Resolved client-side only, same as BrowserGate: `navigator` doesn't exist
+  // during SSR, so calling isWebSerialSupported() directly in render made the
+  // server always emit `disabled`, then Chrome's first hydration pass tried
+  // to flip it — a mismatch that could leave the button stuck disabled
+  // instead of cleanly re-enabling.
+  const [supported, setSupported] = useState(false);
+  useEffect(() => {
+    setSupported(isWebSerialSupported());
+  }, []);
 
   // The board keeps running while the link is down, so this is a transient
   // notice with a way out, not a return to the disconnected state.

@@ -33,5 +33,23 @@
       "min_hw_version": "1.1",
       "changelog": "Added start_period command; fw_hash in hello. Corrected build: serial over UART0/CH340C (CDC_ON_BOOT=0), dio flash mode, and empirically-verified functional pin map + polarity (ED=IO7/16/18/19 HIGH=disabled/safe, AD=IO15/17/8/20 HIGH=auto). Boots Disabled with E/D driven HIGH. Fixed comms-watchdog underflow that tripped ESTOP the instant a manual enable was sent."
     }
+  ],
+  "v13_releases": [
+    {
+      "version": "0.1.0-bringup",
+      "released": "2026-09-08",
+      "description": "V1.3 dual-MCU bring-up firmware: ESP32-S3 host plus RP2350 Smart-port expander",
+      "changelog": "Diagnostic firmware for the Open_FC_V1_3 REV A prototype, not the certified match protocol. ESP32-S3: bu_* JSON-lines protocol, legacy ports, RS-485 Smart ports A/B, field-control engine, RP2350 RUN/BOOT_CTRL control, SPI master (mode 1) to the RP2350, and SWD flashing of the RP2350 (rp2350_swd_probe / rp2350_flash_begin / rp2350_flash_data / rp2350_flash_end). RP2350: SPI slave (PL022, mode 1, 37-byte frames, poll-based results) driving Smart ports C/D with the same handshake engine; verified holding live sessions with two VEX controllers in parallel.",
+      "esp32": {
+        "download_url": "/firmware/openfc-v13-esp32-0.1.0-bringup-merged.bin",
+        "sha256": "d200dca43064485a09907d80e134b66de1284eb92d71e6153018e75ea6f69ef2",
+        "size": 388320
+      },
+      "rp2350": {
+        "download_url": "/firmware/openfc-v13-rp2350-0.1.0-bringup.bin",
+        "sha256": "752ea22d6cdfa174a7b45b9fcabab6b94179fb49851d1c2de066f59f10e21f13",
+        "size": 52944
+      }
+    }
   ]
 }

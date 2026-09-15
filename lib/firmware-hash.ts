@@ -20,8 +20,35 @@ export interface OfficialRelease {
   changelog: string;
 }
 
+/** One MCU's image within a V1.3 release. */
+export interface V13Image {
+  download_url: string;
+  /** SHA-256 of the file as served, checked after download. */
+  sha256: string;
+  size: number;
+}
+
+/**
+ * A release for the V1.3 dual-MCU board: a merged ESP32-S3 image (flashed
+ * with esptool at 0x0, like `official_releases`) plus a raw RP2350 image the
+ * ESP32 writes over its SWD bridge. Kept apart from `official_releases` so
+ * the one-click certified path can never pick up a V1.3 image, and so that
+ * `checkAgainstManifest` (which verifies a production board's `fw_hash`)
+ * ignores it.
+ */
+export interface V13Release {
+  version: string;
+  released: string;
+  description: string;
+  changelog: string;
+  esp32: V13Image;
+  rp2350: V13Image;
+}
+
 export interface FirmwareManifest {
   official_releases: OfficialRelease[];
+  /** Optional: absent from manifests published before the V1.3 board. */
+  v13_releases?: V13Release[];
 }
 
 export type VerificationStatus =
@@ -120,6 +147,32 @@ export async function fetchOfficialFirmware(): Promise<OfficialFirmware> {
     );
   }
   return { release, data };
+}
+
+/** The newest V1.3 release, or null when the manifest has none. */
+export function latestV13Release(manifest: FirmwareManifest): V13Release | null {
+  const list = manifest.v13_releases ?? [];
+  if (list.length === 0) return null;
+  return list.slice().sort((a, b) => (a.released < b.released ? 1 : -1))[0];
+}
+
+/**
+ * Download one V1.3 image and verify it against the manifest hash before it
+ * is handed to either flasher. Same rationale as fetchOfficialFirmware: the
+ * RP2350 path in particular has a verify-on-board step, but a wrong file that
+ * verifies fine is still a wrong file.
+ */
+export async function fetchV13Image(image: V13Image): Promise<ArrayBuffer> {
+  const res = await fetch(image.download_url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Firmware download failed (${res.status}).`);
+  const data = await res.arrayBuffer();
+  const actual = await sha256Hex(data);
+  if (actual !== image.sha256.trim().toLowerCase()) {
+    throw new Error(
+      'Downloaded firmware failed its integrity check. Refusing to flash.',
+    );
+  }
+  return data;
 }
 
 /** True when the board already reports this exact release. */

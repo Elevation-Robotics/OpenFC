@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import DocsLayout, { Note, Section, T, Table } from '@/components/docs/DocsLayout';
 import { REPO_URL } from '@/lib/site';
 
@@ -67,7 +68,12 @@ export default function HardwareDocs() {
       intro={
         <>
           An ESP32-S3 driving four VEX V5 Competition Switch ports through
-          optocouplers. Hardware revision 1.1.
+          optocouplers. Hardware revision 1.1. The dual-MCU prototype that
+          adds RS-485 Smart ports is documented separately under{' '}
+          <Link href="/docs/v1_3" className="text-blue-400 hover:underline">
+            V1.3 dual-MCU board
+          </Link>
+          .
         </>
       }
     >

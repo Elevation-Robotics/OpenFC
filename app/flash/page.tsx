@@ -113,7 +113,11 @@ export default function FlashPage() {
           <Link href="/" className="text-sm text-gray-500 hover:text-gray-300">
             ← OpenFC
           </Link>
-          <h1 className="text-2xl font-bold">Flash Firmware</h1>
+          <h1 className="text-2xl font-bold">Flash Firmware — V1 Board</h1>
+          <p className="mt-1 text-sm text-gray-400">
+            For the original single-MCU V1 board (one ESP32, hardware rev 1.1).
+            The firmware version number is unrelated to the board revision.
+          </p>
         </div>
         <ConnectButton />
       </div>
@@ -131,6 +135,16 @@ export default function FlashPage() {
 
       <FlashProgress active={flashing} pct={pct} message={message} log={log} />
       {error && <p className="mt-3 text-center text-sm text-red-400">{error}</p>}
+
+      <p className="mt-6 rounded-lg border border-yellow-900/60 bg-yellow-950/20 px-4 py-3 text-sm text-yellow-200">
+        Have a V1.3 dual-MCU board (ESP32-S3 plus RP2350 Smart-port expander)?
+        Do not flash it from this page. It takes two different images — use
+        the{' '}
+        <Link href="/flash/v1_3" className="text-blue-400 hover:underline">
+          V1.3 flasher
+        </Link>
+        .
+      </p>
 
       <details className="mt-8 rounded-lg border border-gray-800 bg-gray-900/30 p-4">
         <summary className="cursor-pointer text-sm font-semibold text-gray-300">
