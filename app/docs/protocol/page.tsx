@@ -271,7 +271,13 @@ export default function ProtocolDocs() {
               </>,
               'Outputs were disabled. Always followed by a state event. Not emitted for end_period, which is not a fault.',
             ],
-            [<T key="e">pins</T>, <T key="p">pins[]</T>, 'In reply to get_pins.'],
+            [
+              <T key="e">pins</T>,
+              <>
+                <T>pins[]</T> of <T>{'{pin, label, value}'}</T>
+              </>,
+              'In reply to get_pins. One entry per output: GPIO number, label (e.g. "AD1", "ED1") and true when driven HIGH.',
+            ],
             [
               <T key="e">ack</T>,
               <>

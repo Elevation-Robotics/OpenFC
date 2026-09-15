@@ -5,6 +5,7 @@ import DocsLayout, {
   Note,
   Section,
   T,
+  Table,
 } from '@/components/docs/DocsLayout';
 import { REPO_URL } from '@/lib/site';
 
@@ -50,6 +51,13 @@ export default function DocsHome() {
               Hardware
             </Link>{' '}
             — schematic, pin map and build notes.
+          </li>
+          <li>
+            <Link href="/docs/v1_3" className="text-blue-400 hover:underline">
+              V1.3 dual-MCU board
+            </Link>{' '}
+            — the ESP32-S3 + RP2350 prototype: two-step flashing and the
+            inter-MCU protocols.
           </li>
           <li>
             <Link href="/docs/license" className="text-blue-400 hover:underline">
@@ -172,6 +180,133 @@ stop.set()
 send(cmd='estop')`}</Code>
       </Section>
 
+      <Section id="match" title="A complete match that survives a reconnect">
+        <p>
+          The examples above start one period. A real match runs autonomous,
+          a pause, then driver — and your software may crash, be restarted or
+          lose the cable in the middle. Send a{' '}
+          <Link href="/docs/protocol#tokens" className="text-blue-400 hover:underline">
+            period token
+          </Link>{' '}
+          (<T>match_id</T> + <T>period_seq</T>) and the board&apos;s{' '}
+          <T>device_id</T> with every <T>start_period</T>, and recovery is
+          simply: reopen the port and send the same command again. The board
+          sorts out what that means.
+        </p>
+        <Table
+          head={['Board replies', 'Meaning', 'Your software does']}
+          rows={[
+            [
+              <T key="a">ack</T>,
+              'Period started — or was already running under this token.',
+              'Wait for timer_expired with this period_seq.',
+            ],
+            [
+              <>
+                <T>error</T> <T>period_complete</T>
+              </>,
+              'This period finished while you were away.',
+              'Move on to the next period.',
+            ],
+            [
+              <>
+                <T>error</T> <T>timer_active</T>
+              </>,
+              'A different period is running (another host, or a stale token).',
+              'Stop and surface it to the operator.',
+            ],
+            [
+              <>
+                <T>error</T> <T>wrong_device</T>
+              </>,
+              'This is not the board you started the match on.',
+              'Stop — you have the wrong port.',
+            ],
+          ]}
+        />
+        <Code label="python — full match, safe to restart at any point">{`import json, time, uuid, serial
+
+PORT = 'COM3'
+MATCH_ID = uuid.uuid4().hex[:16]          # any string up to 32 chars; persist it if
+                                          # your process may restart mid-match
+PERIODS = [(1, 'auto', 15000), (2, 'driver', 105000)]   # (period_seq, mode, ms)
+GAP_S = 3
+
+def open_port():
+    while True:
+        try:
+            p = serial.Serial(PORT, 115200, timeout=0.1)
+            p.dtr = p.rts = True
+            return p
+        except serial.SerialException:
+            time.sleep(0.5)               # unplugged or re-enumerating; keep trying
+
+port = open_port()
+
+def send(**kw):
+    port.write((json.dumps(kw) + '\\n').encode())
+
+def events():
+    """Yield parsed JSON lines; reopen the port if it drops."""
+    global port
+    while True:
+        try:
+            line = port.readline().decode(errors='replace').strip()
+        except serial.SerialException:
+            port.close(); port = open_port()
+            yield {'evt': '_reconnected'}
+            continue
+        if line.startswith('{'):
+            try: yield json.loads(line)
+            except ValueError: pass
+
+def identify():
+    send(cmd='get_info')
+    for evt in events():
+        if evt.get('evt') == 'hello':
+            return evt['device_id']
+
+device_id = identify()
+
+def run_period(seq, mode, duration_ms):
+    """Returns when this period is over, however many reconnects it takes."""
+    def start():
+        send(cmd='start_period', mode=mode, duration_ms=duration_ms,
+             match_id=MATCH_ID, period_seq=seq, device_id=device_id)
+    start()
+    for evt in events():
+        kind = evt.get('evt')
+        if kind == '_reconnected':
+            start()                       # replay: a no-op if still running
+        elif kind == 'timer_expired' and evt.get('period_seq') == seq:
+            return evt['reason']          # 'timer' or 'ended'
+        elif kind == 'error' and evt.get('cmd') == 'start_period':
+            if evt['reason'] == 'period_complete':
+                return 'complete'         # finished while we were disconnected
+            raise SystemExit(f"{evt['reason']}: refusing to continue")
+        elif kind == 'estop' and evt.get('source') != 'timer':
+            raise SystemExit(f"e-stop ({evt['source']})")
+
+try:
+    for i, (seq, mode, ms) in enumerate(PERIODS):
+        print(mode, run_period(seq, mode, ms))
+        if i < len(PERIODS) - 1:
+            time.sleep(GAP_S)
+finally:
+    send(cmd='estop')                     # always leave the field disabled`}</Code>
+        <p>
+          Two details make this safe. The board refuses to run a retired token
+          again, so a replay after the period ended can never re-enable the
+          robots; and <T>estop</T> is never gated on tokens or binding, so the
+          operator can always stop the field. If your process itself may be
+          restarted mid-match, persist <T>MATCH_ID</T> and the current{' '}
+          <T>period_seq</T> to disk, then on startup send{' '}
+          <T>get_timer</T> — <T>timer_state</T> carries the running token, or{' '}
+          <T>last_match_id</T> / <T>last_period_seq</T> if the period already
+          finished.
+        </p>
+      </Section>
+
       <Section id="practices" title="Practical notes">
         <ul className="ml-5 list-disc space-y-2">
           <li>
@@ -193,7 +328,26 @@ send(cmd='estop')`}</Code>
           </li>
           <li>
             <strong>Handle <T>error</T> events.</strong> Most rejections are{' '}
-            <T>timer_active</T> — a period is already running.
+            <T>timer_active</T> — a period is already running. The full list of
+            reasons is on the{' '}
+            <Link href="/docs/protocol#errors" className="text-blue-400 hover:underline">
+              protocol page
+            </Link>
+            .
+          </li>
+          <li>
+            <strong>Expect the port to vanish.</strong> A replug re-enumerates
+            the CH340; the path (COM number, <T>/dev/ttyUSB*</T>) usually comes
+            back the same but is not guaranteed. Retry the open in a loop, then
+            replay your last <T>start_period</T> as above.
+          </li>
+          <li>
+            <strong>Check the firmware before a real event.</strong> Compare{' '}
+            <T>fw_hash</T> from <T>hello</T> with the{' '}
+            <Link href="/docs/api" className="text-blue-400 hover:underline">
+              published hashes
+            </Link>{' '}
+            and refuse to run if it is not a certified release.
           </li>
         </ul>
       </Section>
