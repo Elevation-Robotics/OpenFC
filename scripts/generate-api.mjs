@@ -131,6 +131,11 @@ async function main() {
         source_url: SOURCE_URL,
         license: { software: 'Apache-2.0', hardware: 'CERN-OHL-P-2.0' },
         license_url: `${BASE_URL}/docs/license/`,
+        trademark_notice:
+          'VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc. OpenFC is an ' +
+          'independent project of Elevation Robotics and is not affiliated with, manufactured, ' +
+          'endorsed, approved or sponsored by Innovation First, Inc., VEX Robotics or the REC ' +
+          'Foundation. These names are used only to describe hardware compatibility.',
         generated_at,
         endpoints: [
           { path: `/api/${API_VERSION}/firmware/latest.json`, description: 'Newest competition-certified release.' },

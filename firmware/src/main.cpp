@@ -16,6 +16,10 @@
 //
 // ESP32-S3 firmware for a 4-port USB-powered VEX V5 field controller.
 //
+// VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc. OpenFC is
+// an independent project and is not affiliated with, endorsed, approved or
+// sponsored by Innovation First, Inc., VEX Robotics or the REC Foundation.
+//
 // Protocol: JSON-lines over USB CDC at 115200 baud (spec §5). Adds timed-period
 // support on top of the v1.1 manual-control firmware:
 //   - start_period: atomically enable + start an internal countdown, suspending

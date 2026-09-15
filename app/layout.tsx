@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: 'OpenFC — Open-source VEX V5 Field Controller',
   description:
-    'An open-source VEX V5 field controller. Run real autonomous and driver periods at practice, flash the board, and drive it from your own code — all from the browser.',
+    'An open-source VEX V5 field controller. Run real autonomous and driver periods at practice, flash the board, and drive it from your own code — all from the browser. Independent project, not affiliated with or endorsed by Innovation First, Inc. or VEX Robotics.',
   alternates: { canonical: '/' },
 };
 

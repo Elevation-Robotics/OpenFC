@@ -5,6 +5,7 @@
 import Link from 'next/link';
 import BrowserGate from '@/components/BrowserGate';
 import ConnectButton from '@/components/ConnectButton';
+import SiteFooter from '@/components/SiteFooter';
 import MatchSetup from '@/components/field/MatchSetup';
 
 export default function FieldPage() {
@@ -21,6 +22,7 @@ export default function FieldPage() {
         <ConnectButton />
       </div>
       <MatchSetup />
+      <SiteFooter />
     </main>
   );
 }

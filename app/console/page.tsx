@@ -7,6 +7,7 @@
 
 import BrowserGate from '@/components/BrowserGate';
 import ConnectButton from '@/components/ConnectButton';
+import SiteFooter from '@/components/SiteFooter';
 import ConformancePanel from '@/components/console/ConformancePanel';
 import EventLog from '@/components/console/EventLog';
 import PeriodPanel from '@/components/console/PeriodPanel';
@@ -39,6 +40,7 @@ export default function ConsolePage() {
         Unlisted diagnostic page. Everything here drives the board directly —
         clear the field before running anything.
       </p>
+      <SiteFooter />
     </main>
   );
 }

@@ -133,9 +133,9 @@ export default function LicenseDocs() {
           Neither licence grants trademark rights. VEX, VEX Robotics and V5 are
           trademarks of Innovation First, Inc. OpenFC is an independent project
           of Elevation Robotics and is not affiliated with, manufactured,
-          endorsed, approved or sponsored by VEX Robotics or the REC Foundation.
-          Those names appear here only to describe what the board is compatible
-          with.
+          endorsed, approved or sponsored by Innovation First, Inc., VEX
+          Robotics or the REC Foundation. Those names appear here only to
+          describe what the board is compatible with.
         </p>
         <p>
           If you sell boards based on this design, do not imply VEX or RECF
