@@ -195,6 +195,14 @@ export default function MatchSetup() {
           Requires a connected board.
         </p>
       )}
+      {state.connected && state.boardKind === 'v13' && (
+        <p className="mt-3 text-sm text-gray-400">
+          V1.3 board: drives the Smart ports and the legacy ports together.
+          Keep this page open for the whole match. This page ends each
+          period, and if it goes away the Smart ports disable after 2.5 s but
+          the legacy ports stay as they are.
+        </p>
+      )}
     </div>
   );
 }

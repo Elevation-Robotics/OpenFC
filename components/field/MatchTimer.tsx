@@ -1,7 +1,8 @@
 'use client';
 
 // Full-screen match countdown. Browser timer via rAF (in MatchEngine); board
-// timer is authoritative for safety. See spec §9.2.
+// timer is authoritative for safety. See spec §9.2. Works with production
+// (protocol 3) boards and V1.3 boards; lib/match-board.ts has the difference.
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -11,6 +12,7 @@ import {
   MatchPhase,
   MatchState,
 } from '@/lib/match-engine';
+import { boardFor } from '@/lib/match-board';
 import { useSerial } from '../SerialProvider';
 import DeviceStatus from './DeviceStatus';
 
@@ -34,7 +36,8 @@ function fmt(ms: number): string {
 
 export default function MatchTimer({ config }: { config: MatchConfig }) {
   const router = useRouter();
-  const { send, subscribe } = useSerial();
+  const { send, subscribe, state: serial } = useSerial();
+  const boardKind = serial.boardKind ?? 'proto3';
   const engineRef = useRef<MatchEngine | null>(null);
   const configRef = useRef(config);
   const [m, setM] = useState<MatchState>({
@@ -45,9 +48,12 @@ export default function MatchTimer({ config }: { config: MatchConfig }) {
   });
   const [showHint, setShowHint] = useState(true);
 
-  // Create the engine once.
+  // Create the engine once per board dialect. The dialect is known before this
+  // page is reached (setup requires a connected board) and a reconnect to the
+  // same board reports the same one, so this does not recreate mid-match.
   useEffect(() => {
-    const engine = new MatchEngine(configRef.current, (line) => void send(line));
+    const sendLine = (line: string) => void send(line);
+    const engine = new MatchEngine(configRef.current, sendLine, boardFor(boardKind, sendLine));
     engineRef.current = engine;
     const unsub = engine.subscribe(setM);
     return () => {
@@ -55,7 +61,7 @@ export default function MatchTimer({ config }: { config: MatchConfig }) {
       engine.destroy();
       engineRef.current = null;
     };
-  }, [send]);
+  }, [send, boardKind]);
 
   // Feed board events to the engine and re-sync on reconnect (get_timer / state).
   useEffect(() => {

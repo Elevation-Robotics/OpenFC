@@ -1,8 +1,9 @@
 // Match state machine — period sequencing + timing. See spec §9.2.2–§9.2.4.
 // Framework-agnostic: the match page subscribes for state updates.
 
-import { cmd, OpenFCEvent, PeriodToken } from './openfc-protocol';
+import { OpenFCEvent, PeriodToken } from './openfc-protocol';
 import { mintMatchId } from './period-controller';
+import { MatchBoard, proto3Board } from './match-board';
 
 export type MatchPhase =
   | 'idle'
@@ -111,7 +112,15 @@ export class MatchEngine {
   private readonly matchId = mintMatchId('practice');
   private periodSeq = 0;
 
-  constructor(private config: MatchConfig, private send: SendFn) {}
+  private readonly board: MatchBoard;
+
+  /**
+   * `board` picks the firmware dialect (lib/match-board.ts); without one the
+   * engine speaks protocol 3, as it always has.
+   */
+  constructor(private config: MatchConfig, send: SendFn, board?: MatchBoard) {
+    this.board = board ?? proto3Board(send);
+  }
 
   /** Token of the period currently armed on the board, if any. */
   private token(): PeriodToken {
@@ -158,10 +167,9 @@ export class MatchEngine {
       return;
     }
     if (phase !== 'auto' && phase !== 'driver') return;
-    // The board owns a running countdown; cancel it so the robots are disabled
-    // now rather than at the original expiry, and so the next start_period is
-    // not rejected with timer_active.
-    this.send(cmd.estop());
+    // Disable now rather than at the original expiry (on protocol 3 this also
+    // cancels the board's countdown, so the next start_period is accepted).
+    this.board.disable();
     this.advanceFromActive();
   }
 
@@ -169,7 +177,7 @@ export class MatchEngine {
     this.stopPing();
     this.clearFallback();
     this.stopCountdown();
-    this.send(cmd.estop());
+    this.board.disable();
     this.set({ phase: 'stopped', timeRemainingMs: 0 });
   }
 
@@ -186,11 +194,10 @@ export class MatchEngine {
   /** Feed board events so the engine can advance / error out. */
   handleEvent(evt: OpenFCEvent): void {
     const { phase } = this.state;
-    if (evt.evt === 'timer_expired') {
-      if (phase === 'auto' || phase === 'driver') this.advanceFromActive();
-    } else if (evt.evt === 'estop' && evt.source === 'watchdog') {
-      if (phase === 'auto' || phase === 'driver') this.enterError();
-    }
+    const signal = this.board.signal(evt);
+    if (phase !== 'auto' && phase !== 'driver') return;
+    if (signal === 'expired') this.advanceFromActive();
+    else if (signal === 'watchdog') this.enterError();
   }
 
   /** Re-sync the browser countdown after a reconnect (get_timer response). */
@@ -227,7 +234,7 @@ export class MatchEngine {
     // it is still running is a no-op, and one it has retired comes back as
     // period_complete.
     if (left > RESYNC_MIN_MS) {
-      this.send(cmd.startPeriod(phase, left, this.token()));
+      this.board.rearm(phase, left, this.token());
     }
   }
 
@@ -244,7 +251,7 @@ export class MatchEngine {
       phaseDurationMs: durationMs,
       timeRemainingMs: durationMs,
     });
-    this.send(cmd.startPeriod(mode, durationMs, this.token()));
+    this.board.startPeriod(mode, durationMs, this.token());
     this.startPing();
     this.startCountdown();
   }
@@ -277,6 +284,7 @@ export class MatchEngine {
     if (from !== 'auto' && from !== 'driver') return;
     this.stopPing();
     this.clearFallback();
+    this.board.periodEnded();
     if (from === 'auto' && this.config.sequence === 'both') {
       if (this.config.transitions === 'manual') this.enterWaiting();
       else if (this.config.gapDurationMs > 0) this.enterGap();
@@ -297,7 +305,7 @@ export class MatchEngine {
 
   private startPing(): void {
     this.stopPing();
-    this.pingId = setInterval(() => this.send(cmd.ping()), PING_INTERVAL_MS);
+    this.pingId = setInterval(() => this.board.ping(), PING_INTERVAL_MS);
   }
   private stopPing(): void {
     if (this.pingId) clearInterval(this.pingId);
@@ -328,6 +336,13 @@ export class MatchEngine {
     if (remaining <= 0) {
       if (this.state.phase === 'gap') {
         this.enterActive('driver');
+        return;
+      }
+      if (
+        (this.state.phase === 'auto' || this.state.phase === 'driver') &&
+        this.board.hostEndsPeriods
+      ) {
+        this.advanceFromActive();
         return;
       }
       if (

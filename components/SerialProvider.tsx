@@ -32,6 +32,8 @@ import {
   checkAgainstManifest,
   fetchManifest,
 } from '@/lib/firmware-hash';
+import type { BoardKind } from '@/lib/match-board';
+import type { BringupFieldPort, BringupFieldState, BringupHello } from '@/lib/openfc-bringup-protocol';
 
 export interface TimedPeriod {
   active: boolean;
@@ -90,6 +92,13 @@ export interface SerialState {
   timedPeriod: TimedPeriod;
   verification: VerificationStatus | null;
   pinStates: PinState[] | null;
+  /**
+   * Which firmware answered: `proto3` for the production `hello`, `v13` for the
+   * V1.3 bring-up `bu_hello`. Null until the board identifies itself.
+   */
+  boardKind: BoardKind | null;
+  /** V1.3 only: the Smart ports from the last `bu_field`. */
+  smartPorts: BringupFieldPort[] | null;
 }
 
 const initialState: SerialState = {
@@ -109,6 +118,8 @@ const initialState: SerialState = {
   timedPeriod: NO_PERIOD,
   verification: null,
   pinStates: null,
+  boardKind: null,
+  smartPorts: null,
 };
 
 type Action =
@@ -164,11 +175,42 @@ function reducer(state: SerialState, action: Action): SerialState {
   }
 }
 
+const V13_STATE: Record<BringupFieldState['state'], BoardState> = {
+  disabled: 'DISABLED',
+  driver: 'ENABLED_DRIVER',
+  auton: 'ENABLED_AUTO',
+};
+
 function applyEvent(state: SerialState, evt: OpenFCEvent): SerialState {
+  // V1.3 bring-up events share the transport but not the production union.
+  const raw = evt as unknown as { evt: string };
+  if (raw.evt === 'bu_hello') {
+    const hello = raw as unknown as BringupHello;
+    return {
+      ...state,
+      deviceId: hello.device_id,
+      fwVersion: hello.fw_version,
+      hwVersion: hello.hw_version,
+      fwHash: null,
+      proto: null,
+      verification: null,
+      boardKind: 'v13',
+    };
+  }
+  if (raw.evt === 'bu_field') {
+    const field = raw as unknown as BringupFieldState;
+    return {
+      ...state,
+      boardState: field.engaged ? V13_STATE[field.state] : 'DISABLED',
+      smartPorts: field.ports,
+    };
+  }
   switch (evt.evt) {
     case 'hello':
       return {
         ...state,
+        boardKind: 'proto3',
+        smartPorts: null,
         deviceId: evt.device_id,
         fwVersion: evt.fw_version,
         hwVersion: evt.hw_version,
