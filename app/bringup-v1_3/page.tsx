@@ -14,6 +14,7 @@ import ConnectButton from '@/components/ConnectButton';
 import SiteFooter from '@/components/SiteFooter';
 import BoardBanner from '@/components/bringup/BoardBanner';
 import FieldControlPanel from '@/components/bringup/FieldControlPanel';
+import CapturePanel from '@/components/bringup/CapturePanel';
 import LegacyPortsPanel from '@/components/bringup/LegacyPortsPanel';
 import SmartPortPanel from '@/components/bringup/SmartPortPanel';
 import RP2350LinkPanel from '@/components/bringup/RP2350LinkPanel';
@@ -49,6 +50,7 @@ export default function BringupV13Page() {
 
       <div className="space-y-6">
         <FieldControlPanel />
+        <CapturePanel />
         <LegacyPortsPanel />
         <SmartPortPanel port="A" />
         <SmartPortPanel port="B" />

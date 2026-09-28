@@ -127,7 +127,13 @@ export async function flashRp2350(
     if (!status.ok) {
       throw new Error(`Write failed at offset ${off} (${status.fail ?? 'unknown'}).`);
     }
-    const written = status.received ?? off + chunk.length;
+    const expected = off + chunk.length;
+    if (status.received !== undefined && status.received !== expected) {
+      throw new Error(
+        `Bytes lost at offset ${off}: board has ${status.received}, expected ${expected}.`,
+      );
+    }
+    const written = status.received ?? expected;
     // 8–96% band for the write; begin/end take the rest.
     const pct = 8 + Math.round((written / bytes.length) * 88);
     onProgress(

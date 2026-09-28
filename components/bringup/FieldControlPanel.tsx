@@ -1,18 +1,10 @@
 'use client';
 
-// The real field-control engine (ported OpenFC-Smart session protocol),
-// driving Smart ports A and B in unison. Engage owns the buses (raw port
-// diagnostics are refused while engaged); the commanded state applies to
-// every linked controller, queuing per-port until that port reaches A7
-// field mode (robot radio linked).
-//
-// Operational notes carried over from the proven bench workflow:
-//  - Treat Engage as "field power on". If a controller sits unlinked and
-//    won't grant a session, power-cycle IT while engaged — the engine stays
-//    armed and catches the cold window automatically.
-//  - Session commit can take ~15 s of request/answer cycling after engage.
-//  - The firmware auto-disables driver/auton if this page stops pinging for
-//    2.5 s (closing the tab is an e-stop).
+// Field control for all four Smart ports (A/B on the ESP32, C/D on the
+// RP2350). From 0.1.4 the board boots engaged and Disabled; engaged, the
+// engines own the buses and raw port diagnostics are refused. The firmware
+// auto-disables driver/auton if this page stops pinging for 2.5 s (closing
+// the tab is an e-stop).
 
 import { useEffect, useRef, useState } from 'react';
 import { useSerial } from '@/components/SerialProvider';
@@ -26,7 +18,7 @@ import {
 
 const FM_LABEL: Record<number, { text: string; tone: string }> = {
   0: { text: 'no stream', tone: 'text-gray-500' },
-  1: { text: 'A0 joystick-only (no field UI yet)', tone: 'text-yellow-300' },
+  1: { text: 'A0 joystick-only (no field state shown)', tone: 'text-yellow-300' },
   2: { text: 'A7 FIELD MODE', tone: 'text-green-300' },
 };
 
@@ -64,12 +56,12 @@ export default function FieldControlPanel() {
     <section className="rounded-xl border-2 border-blue-800 bg-gray-900/50 p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Field control (ports A + B)</h2>
+          <h2 className="text-lg font-semibold">Field control (Smart ports A–D)</h2>
           <p className="mt-1 max-w-2xl text-sm text-gray-400">
-            The ported OpenFC-Smart session engine. Engage, wait for
-            link/session on each port (power-cycle a stubborn controller
-            while engaged), then command states. Driver/auton queue per port
-            until its robot radio reaches field mode.
+            The board boots engaged and Disabled; a controller on any Smart
+            port links within a couple of seconds and shows the state at the
+            top of its screen. Commanded states apply to every port.
+            Disengage to use the raw port diagnostics or the relay.
           </p>
         </div>
         <button

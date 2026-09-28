@@ -26,12 +26,15 @@ interface Entry {
   evt: RawEvent;
 }
 
-const NOISE_EVENTS = new Set(['bu_state', 'heartbeat']);
+// bu_cap is hidden with the heartbeats: a dump is thousands of lines, and
+// the Bus capture panel collects them itself.
+const NOISE_EVENTS = new Set(['bu_state', 'heartbeat', 'bu_cap']);
 
 const TONE: Record<string, string> = {
   bu_error: 'text-red-300',
   error: 'text-red-300',
   ack: 'text-gray-500',
+  bu_cap: 'text-cyan-300',
   bu_state: 'text-gray-700',
   heartbeat: 'text-gray-700',
 };
