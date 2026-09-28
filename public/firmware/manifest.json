@@ -36,6 +36,22 @@
   ],
   "v13_releases": [
     {
+      "version": "0.1.4-bringup",
+      "released": "2026-09-27",
+      "description": "Smart-port field control rebuilt from a real field controller; board-driven status LEDs",
+      "changelog": "Release build (no bus capture or relay). The Smart-port engines on both MCUs now answer the controller exactly as a VEX field controller does, so controllers reach field mode and show Disabled/Driver/Auton with no robot linked; the state frame is re-sent until the controller echoes it. Both MCUs boot engaged and Disabled and the RP2350 is released at boot, so a controller on any Smart port shows Disabled with no host. The board paints the status LEDs (red disabled, amber auton, green driver) and reports robot names on all four ports. Fixes: SPI timeouts and non-blocking RP2350 recovery keep ports A/B responsive, RP2350 flashing works while engaged, and a flash chunk that arrives short is rejected. Works with the practice match page, which drives the Smart ports and the legacy ports together.",
+      "esp32": {
+        "download_url": "/firmware/openfc-v13-esp32-0.1.4-bringup-merged.bin",
+        "sha256": "cfca6fe14f30b9e3e12f7b109a67e0f56f90a8f0945577988c6ba875c0ffccb8",
+        "size": 390544
+      },
+      "rp2350": {
+        "download_url": "/firmware/openfc-v13-rp2350-0.1.4-bringup.bin",
+        "sha256": "45777852972aacd4b4c1035a55a3f946b3fb795178682885f06b4b1fb448de2f",
+        "size": 52456
+      }
+    },
+    {
       "version": "0.1.0-bringup",
       "released": "2026-09-08",
       "description": "V1.3 dual-MCU bring-up firmware: ESP32-S3 host plus RP2350 Smart-port expander",
