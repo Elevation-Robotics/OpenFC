@@ -58,6 +58,7 @@ static const int PIN_LEGACY_AD = 48;   // DRIVER/AUT,     shared, all 4 ports
 #define LEGACY_OPTO_OFF  LOW
 
 // ─── RS-485 Smart ports A/B (direct on this MCU; C/D are on the RP2350) ──
+// Jack order on the REV A board, bottom to top: B, A, D, C (bench, 2026-09-26).
 static const int PIN_RS485A_TX = 17;
 static const int PIN_RS485A_RX = 18;
 static const int PIN_RS485A_DE = 4;

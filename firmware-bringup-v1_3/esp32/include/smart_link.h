@@ -12,65 +12,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// V5 Smart-port field-control session engine — a per-port port of the
-// PROVEN OpenFC-Smart brain emulator (OpenFC-Smart/firmware/src/main.cpp as
-// of its 2026-07-06 fully-working state), reshaped as a class so one
-// instance runs per RS-485 port (A and B here; C/D later via the RP2350).
+// V5 Smart-port field-control session engine, one instance per RS-485 port
+// (A and B here; C/D run the same logic on the RP2350, smart_link_rp.*).
 //
-// What is kept, verbatim in behavior (each was individually hard-won —
-// see OpenFC-Smart/docs/openfc-bringup-findings.md before changing ANY):
-//   - Announce reply pair with AUTO cold/warm reply1 (byte13), HELD DE,
-//     62 us reply gap (+100 us cold extra), 120 ms cold-isolation gate,
-//     250 ms post-reply refractory, silence between 02 13 ack and enum.
-//   - Inline 700 us post-reply ack capture (the ack lands ~50-370 us after
-//     reply2 — too fast for the main loop to catch).
-//   - Response-driven enumeration: answer the controller's `11` request
-//     (both 16- and 32-byte forms) with 04 -> 54(byte3=0x00, re-CRC'd) ->
-//     A3 -> 53, at the captured ~1 ms pacing. NEVER send an 11-led or
-//     A7-led frame. The 54 byte3 patch was the final key to sessions.
-//   - Brain-accurate steady state: the CONTROLLER streams A0/A7 at 50 Hz;
-//     we answer each with 02 A7 (disabled; plus a 3-frame 53 C9 entry
-//     burst) or 53-with-live-ms-countdown on 4 of 5 slots (driver/auton).
-//   - Field-mode interlock: driver/auton only stream once the A7 stream
-//     (robot radio in field mode) is present; commanded states queue in
-//     A0 joystick-only mode. Software replug self-heals A0 lock-in.
-//   - Match-end auto-disable when the countdown reaches 0.
-//   - Relink on announce-while-linked; arm bring-up on EITHER 02 13 ack
-//     variant (86 B9 or F3 78 — F3 78 was never the gate).
+// Modelled on a relay recording of a real VEX field controller talking to a
+// V5 controller (2026-09-27; see openfc_frames.h for the exchange table).
+// The controller leads: it announces, identifies itself, requests
+// enumeration and then streams A0/A7 status at 50 Hz. The engine answers
+// every controller frame exactly once with the frame the field controller
+// sent in that position, and sends nothing unprompted.
 //
-// Deliberately dropped from the original: the experiment scaffolding
-// (sniffer, injtest, hstest, reply/DE mode selectors, cold-probe, engage-
-// settle) and the legacy non-brain-accurate model. One behavioral delta:
-// the original flushed the RX FIFO after every TX to drop its own echo
-// (its transceiver's RE was hard-enabled); this board's THVD2450 RE is
-// gated by DE, so there IS no echo — the flushes are omitted rather than
-// risk eating a controller byte that lands right after our TX.
+// Replaces the earlier brain-emulator model (OpenFC-Smart), which sent the
+// controller's own 13 20 and A3 frames itself, answered announces with a
+// reply pair, and assumed field mode (A7) needed a radio-linked robot. The
+// recording showed A7 with no robot linked.
 
 #pragma once
 
 #include <Arduino.h>
 #include <driver/uart.h>
 #include "openfc_frames.h"
+#include "openfc_capture.h"
 
 // Global field state shared by all port engines (a field controller drives
 // every port in unison). Defined in main.cpp.
 extern openfc_state_t g_field_state;
 extern uint32_t g_driver_period_ms;
 extern uint32_t g_auton_period_ms;
+// true: stream Disabled to a controller that is not in A7 field mode, and
+// hold driver/auton until it is. false (default): stream the commanded state
+// to any linked controller.
+extern bool g_field_interlock;
 
 class SmartLink {
 public:
     void begin(HardwareSerial* bus, uart_port_t uartNum, int dePin, char portName);
     // Reset all session state (called on engage and disengage).
     void reset(uint32_t now);
-    // Run RX + timers. Call every loop iteration while the field is engaged.
+    // Run RX. Call every loop iteration while the field is engaged.
     void service(uint32_t now);
 
     // Set when this port's countdown expires; main.cpp consumes it and drops
     // g_field_state to disabled (first port to finish ends the match).
     bool matchEndPending = false;
-    // Set when the software-replug fires, for a host event.
+    // Kept for the host event; the engine no longer replugs.
     bool swreplugPending = false;
+
+    // Every byte read from or written to the bus goes here when set.
+    CapSink capSink = nullptr;
 
     // ─── Status (read by main.cpp's heartbeat) ───
     char name = '?';
@@ -78,27 +67,32 @@ public:
     int streamKind = 0;            // 0=none, 1=A0 joystick-only, 2=A7 field mode
     char robotName[7] = {0};
     uint32_t lastCtrlRxMs = 0;
-    uint32_t linkAckCount = 0;     // 02 13 acks (either variant)
-    uint32_t sessionAckCount = 0;  // 02 13 with session flag (F3 78)
-    uint32_t pollAckCount = 0;     // in-session signal count ("pack")
-    uint32_t replyTxCount = 0;
-    uint32_t enumReqCount = 0;
+    uint32_t linkAckCount = 0;     // session acks sent (answers to 13 20)
+    uint32_t sessionAckCount = 0;  // same count; kept for the status fields
+    uint32_t pollAckCount = 0;     // A0/A7 status frames received ("pack")
+    uint32_t replyTxCount = 0;     // announces answered
+    uint32_t enumReqCount = 0;     // 11 enumeration requests received
     uint32_t swreplugCount = 0;
 
     bool ctrlPresent(uint32_t now) const {
-        return ctrlSeen && (now - lastCtrlRxMs) < 400;
+        return ctrlSeen_ && (now - lastCtrlRxMs) < 400;
     }
 
 private:
-    void busWrite(const uint8_t* f, size_t n);       // DE-gated single frame
-    void busWriteHeld(const uint8_t* f, size_t n);   // caller holds DE
-    void handleLinkPoll(const uint8_t* f);
-    void handleShortAck(const uint8_t* f);
-    void handleCtrlFrame(const uint8_t* f);
-    void answerEnumRequest(size_t reqlen, uint32_t now);
+    enum Stage : uint8_t {
+        ST_IDLE,        // nothing yet, or mid-session after a reset
+        ST_HELLO,       // answered an announce, waiting for 13 20
+        ST_ACKED,       // sent the session ack, waiting for 11
+        ST_SENT04,      // answered 11 with 04, waiting for 02 04
+        ST_WANT54,      // next A7/A0 gets the 54 descriptor
+        ST_SENT54,      // waiting for 02 54, then A3
+        ST_ENUMERATED,  // A3 acknowledged; next status frame gets the state
+    };
+
+    void busWrite(const uint8_t* f, size_t n);
+    void onFrame(const uint8_t* f, size_t n, uint32_t now);
     void streamStatePoll();
     uint32_t matchRemainingMs() const;
-    void doSoftReplug(uint32_t now);
 
     HardwareSerial* bus_ = nullptr;
     uart_port_t uartNum_ = UART_NUM_1;
@@ -107,21 +101,12 @@ private:
     uint8_t rxBuf_[512];
     size_t rxLen_ = 0;
 
-    // Link state machine
-    uint32_t linkAckMs_ = 0;       // when the 02 13 ack armed the bring-up
-    bool enumDone_ = false;
-    bool ctrlSeen = false;
-    uint32_t lastLinkpollUs_ = 0;  // cold-isolation reference
-    uint32_t lastReplyUs_ = 0;     // refractory reference
-    uint32_t lastEnumAnswerMs_ = 0;
-    uint32_t lastA7TxMs_ = 0;      // free-run steady-state tick anchor
+    Stage stage_ = ST_IDLE;
+    bool ctrlSeen_ = false;
 
-    // Steady-state / interlock
     int lastStreamedMode_ = -1;
     uint8_t replySlot_ = 0;
-    uint8_t c53BurstLeft_ = 0;
+    uint8_t echoMode_ = 0;         // mode the controller reports in A7 byte 6
+    uint8_t since53_ = 0;          // frames since our last 53
     uint32_t stateEnteredMs_ = 0;  // per-port 53 countdown base
-    uint32_t a0SinceMs_ = 0;
-    uint32_t forcedQuietUntilMs_ = 0;
-    bool seenA7_ = false;          // this engage has reached field mode at least once
 };

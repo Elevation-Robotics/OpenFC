@@ -45,15 +45,38 @@
 #include "openfc_pins_rp2350.h"
 #include "openfc_frames.h"
 #include "openfc_spi_link.h"
+#include "openfc_capture.h"
 #include "smart_link_rp.h"
+
+// Development tools (the C/D bus-capture ring), as on the ESP32; release
+// builds set OPENFC_DEVTOOLS=0 and get the 256 KB back.
+#ifndef OPENFC_DEVTOOLS
+#define OPENFC_DEVTOOLS 0
+#endif
 
 openfc_state_t g_field_state = STATE_DISABLED;
 uint32_t g_driver_period_ms = 105000;
 uint32_t g_auton_period_ms = 15000;
-static bool fieldEngaged = false;
+bool g_field_interlock = false;
+static bool fieldEngaged = true;   // boot engaged and Disabled; FIELD_SET can disengage
 static uint32_t lastSpiCmdMs = 0;
 
 static SmartLinkRp linkC, linkD;
+
+#if OPENFC_DEVTOOLS
+// Bus capture for C/D, read out by the ESP32 over SPI_CMD_CAPTURE_READ.
+static uint8_t capMem[256 * 1024];
+static CaptureRing capRing;
+static uint8_t capMask = 0;   // bit0 C, bit1 D
+
+static void capSink(char port, bool tx, const uint8_t* b, size_t n, uint32_t tUs) {
+    if (capMask & (port == 'C' ? 1 : 2)) capRing.push(port, tx, b, n, tUs);
+}
+
+static void put32(uint8_t* p, uint32_t v) {
+    p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+#endif
 
 // ─── SPI slave state ───
 static uint8_t resultTxBuf[SPI_LINK_FRAME_LEN];
@@ -158,23 +181,26 @@ static void handleRequest(const SpiLinkFrame& req) {
             g_field_state = (st == 1) ? STATE_DRIVER : (st == 2) ? STATE_AUTON : STATE_DISABLED;
             memcpy(&g_driver_period_ms, req.payload + 2, 4);
             memcpy(&g_auton_period_ms, req.payload + 6, 4);
+            g_field_interlock = req.len >= 11 && req.payload[10] != 0;
             setResult(SPI_STATUS_OK, 0, nullptr, 0);
             break;
         }
         case SPI_CMD_FIELD_STATUS: {
-            uint8_t p[14];
+            uint8_t p[26];
             p[0] = fieldEngaged ? 1 : 0;
             p[1] = (g_field_state == STATE_DRIVER) ? 1 : (g_field_state == STATE_AUTON) ? 2 : 0;
             SmartLinkRp* ls[2] = {&linkC, &linkD};
             for (int i = 0; i < 2; i++) {
                 uint32_t now = millis();
                 bool fresh = (now - ls[i]->lastCtrlRxMs) < 500;
-                p[2 + i * 6 + 0] = ls[i]->linkUp ? 1 : 0;
-                p[2 + i * 6 + 1] = (uint8_t)(fresh ? ls[i]->streamKind : 0);
-                p[2 + i * 6 + 2] = (uint8_t)(ls[i]->pollAckCount & 0xFF);
-                p[2 + i * 6 + 3] = (uint8_t)((ls[i]->pollAckCount >> 8) & 0xFF);
-                p[2 + i * 6 + 4] = (uint8_t)(ls[i]->linkAckCount & 0xFF);
-                p[2 + i * 6 + 5] = (uint8_t)(ls[i]->swreplugCount & 0xFF);
+                uint8_t* q = p + 2 + i * 12;
+                q[0] = ls[i]->linkUp ? 1 : 0;
+                q[1] = (uint8_t)(fresh ? ls[i]->streamKind : 0);
+                q[2] = (uint8_t)(ls[i]->pollAckCount & 0xFF);
+                q[3] = (uint8_t)((ls[i]->pollAckCount >> 8) & 0xFF);
+                q[4] = (uint8_t)(ls[i]->linkAckCount & 0xFF);
+                q[5] = (uint8_t)(ls[i]->swreplugCount & 0xFF);
+                memcpy(q + 6, ls[i]->robotName, 6);
             }
             setResult(SPI_STATUS_OK, 0, p, sizeof(p));
             break;
@@ -202,6 +228,28 @@ static void handleRequest(const SpiLinkFrame& req) {
             setResult(SPI_STATUS_PENDING, req.port, nullptr, 0);
             break;
         }
+#if OPENFC_DEVTOOLS
+        case SPI_CMD_CAPTURE: {
+            uint8_t op = req.payload[0];
+            if (op == 1) { capRing.clear(); capMask = req.payload[1] & 3; }
+            else if (op == 0) capMask = 0;
+            uint8_t p[18];
+            put32(p, capRing.used());
+            put32(p + 4, capRing.size());
+            put32(p + 8, capRing.dropped());
+            put32(p + 12, capRing.records());
+            p[16] = capMask != 0;
+            p[17] = capMask;
+            setResult(SPI_STATUS_OK, 0, p, sizeof(p));
+            break;
+        }
+        case SPI_CMD_CAPTURE_READ: {
+            uint8_t p[SPI_LINK_MAX_PAYLOAD];
+            uint8_t n = (uint8_t)capRing.read(p, SPI_LINK_MAX_PAYLOAD);
+            setResult(SPI_STATUS_OK, 0, p, n, capRing.empty() ? 0 : 1);
+            break;
+        }
+#endif
         case SPI_CMD_GET_RESULT:
             // The transaction itself clocked the result out; keep it for
             // re-polls (setResult not called → same frame preloads again).
@@ -211,6 +259,8 @@ static void handleRequest(const SpiLinkFrame& req) {
             break;
     }
 }
+
+static bool preloaded = false;   // result bytes were already in the FIFO when CS fell
 
 static void serviceSpi() {
     bool csLow = !gpio_get(PIN_SPI_CS);
@@ -227,32 +277,36 @@ static void serviceSpi() {
         }
         inTransaction = true;
         rxIdx = 0;
+        preloaded = txIdx >= 8;
     }
 
-    // Active transaction: feed remaining TX, collect RX.
-    while (txIdx < SPI_LINK_FRAME_LEN && spi_is_writable(spi0)) {
-        spi_get_hw(spi0)->dr = resultTxBuf[txIdx++];
-    }
-    while (spi_is_readable(spi0) && rxIdx < sizeof(rxFrame)) {
-        rxFrame[rxIdx++] = (uint8_t)spi_get_hw(spi0)->dr;
+    if (csLow) {
+        // Active transaction: feed remaining TX, collect RX.
+        while (txIdx < SPI_LINK_FRAME_LEN && spi_is_writable(spi0)) {
+            spi_get_hw(spi0)->dr = resultTxBuf[txIdx++];
+        }
+        while (spi_is_readable(spi0) && rxIdx < sizeof(rxFrame)) {
+            rxFrame[rxIdx++] = (uint8_t)spi_get_hw(spi0)->dr;
+        }
+        return;
     }
 
-    if (csLow) return;   // still clocking
-
-    // CS rose: transaction over. Late-drain whatever's left.
+    // CS rose: transaction over. Never push TX past this point: a byte the
+    // master did not clock stays in the FIFO and shifts every later result.
     delayMicroseconds(5);
     while (spi_is_readable(spi0) && rxIdx < sizeof(rxFrame)) {
         rxFrame[rxIdx++] = (uint8_t)spi_get_hw(spi0)->dr;
     }
     inTransaction = false;
-    bool clean = (rxIdx == SPI_LINK_FRAME_LEN) && (txIdx == SPI_LINK_FRAME_LEN);
+    bool fifoClean = preloaded && txIdx == SPI_LINK_FRAME_LEN;
     SpiLinkFrame req;
-    if (clean && spi_link_unpack(rxFrame, &req)) {
-        handleRequest(req);
+    if (rxIdx == SPI_LINK_FRAME_LEN && spi_link_unpack(rxFrame, &req)) handleRequest(req);
+    if (fifoClean) {
         txIdx = 0;       // preload the (possibly new) result for the next poll
     } else {
-        // Desync (short transaction, overrun mid-engine-work, bad checksum):
-        // the PL022 FIFOs can't be flushed, so re-init the peripheral.
+        // The master started before the preload, or clocked past what was
+        // fed: the FIFO state is unknown and the PL022 has no flush, so
+        // re-init. The master retries its poll after the bad checksum.
         spiPeriphInit();
     }
     rxIdx = 0;
@@ -283,6 +337,10 @@ void setup() {
 
     linkC.begin(&Serial1, PIN_RS485C_DE, 'C');
     linkD.begin(&Serial2, PIN_RS485D_DE, 'D');
+#if OPENFC_DEVTOOLS
+    capRing.init(capMem, sizeof(capMem));
+    linkC.capSink = linkD.capSink = capSink;
+#endif
 
     rawC.bus = &Serial1; rawC.dePin = PIN_RS485C_DE;
     rawD.bus = &Serial2; rawD.dePin = PIN_RS485D_DE;
@@ -300,6 +358,8 @@ void loop() {
         if (rawPending && (int32_t)(now - rawDeadlineMs) >= 0) {
             rawFinish(*rawPending, rawPendingPort);
             rawPending = nullptr;
+            // The old result may already be preloaded in the FIFO.
+            if (!inTransaction) spiPeriphInit();
         }
     } else if (rawPending) {
         rawPending = nullptr;   // engage cancels any in-flight raw capture
