@@ -36,6 +36,22 @@
   ],
   "v13_releases": [
     {
+      "version": "0.1.5-bringup",
+      "released": "2026-10-20",
+      "description": "Fixes Smart ports C/D staying disabled after a state change",
+      "changelog": "Release build (no bus capture or relay). A field-state change the RP2350 missed on the SPI link went unnoticed: the ESP32 read back the previous OK result, so ports C/D stayed in the old state, usually Disabled, until the next change. Each field set now carries a sequence number that the RP2350 reports back in its status, and the ESP32 re-sends the state when they differ, so a missed change is corrected within 200 ms. After the RP2350's link watchdog disables the field, the state is restored once the link is back. Flash both MCUs from this release. NOT YET BENCH-TESTED: built from the fix, awaiting a C/D state walk on hardware.",
+      "esp32": {
+        "download_url": "/firmware/openfc-v13-esp32-0.1.5-bringup-merged.bin",
+        "sha256": "ff7be33aa9f41069465f91f6862b98189c367c283bbeb739dc6dbdf71be8083e",
+        "size": 390688
+      },
+      "rp2350": {
+        "download_url": "/firmware/openfc-v13-rp2350-0.1.5-bringup.bin",
+        "sha256": "b985418783e5527a3517700bd0c6036e7c6068415cd4ed1cebaba06422859c84",
+        "size": 52496
+      }
+    },
+    {
       "version": "0.1.4-bringup",
       "released": "2026-09-27",
       "description": "Smart-port field control rebuilt from a real field controller; board-driven status LEDs",
