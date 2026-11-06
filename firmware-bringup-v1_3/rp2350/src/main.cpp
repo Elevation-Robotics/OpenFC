@@ -60,6 +60,7 @@ uint32_t g_auton_period_ms = 15000;
 bool g_field_interlock = false;
 static bool fieldEngaged = true;   // boot engaged and Disabled; FIELD_SET can disengage
 static uint32_t lastSpiCmdMs = 0;
+static uint8_t fieldSetSeq = 0;    // seq of the last FIELD_SET applied, echoed in FIELD_STATUS
 
 static SmartLinkRp linkC, linkD;
 
@@ -182,11 +183,12 @@ static void handleRequest(const SpiLinkFrame& req) {
             memcpy(&g_driver_period_ms, req.payload + 2, 4);
             memcpy(&g_auton_period_ms, req.payload + 6, 4);
             g_field_interlock = req.len >= 11 && req.payload[10] != 0;
+            fieldSetSeq = req.len >= 12 ? req.payload[11] : 0;
             setResult(SPI_STATUS_OK, 0, nullptr, 0);
             break;
         }
         case SPI_CMD_FIELD_STATUS: {
-            uint8_t p[26];
+            uint8_t p[27];
             p[0] = fieldEngaged ? 1 : 0;
             p[1] = (g_field_state == STATE_DRIVER) ? 1 : (g_field_state == STATE_AUTON) ? 2 : 0;
             SmartLinkRp* ls[2] = {&linkC, &linkD};
@@ -202,6 +204,7 @@ static void handleRequest(const SpiLinkFrame& req) {
                 q[5] = (uint8_t)(ls[i]->swreplugCount & 0xFF);
                 memcpy(q + 6, ls[i]->robotName, 6);
             }
+            p[26] = fieldSetSeq;
             setResult(SPI_STATUS_OK, 0, p, sizeof(p));
             break;
         }
@@ -373,9 +376,11 @@ void loop() {
             g_field_state = STATE_DISABLED;   // ESP32 sees it via FIELD_STATUS
         }
         // Link watchdog: if the ESP32 stops talking (host gone, cable out),
-        // an enabled state must not persist unsupervised.
+        // an enabled state must not persist unsupervised. Dropping the seq
+        // makes the ESP32 re-send its state once the link is back.
         if (g_field_state != STATE_DISABLED && (now - lastSpiCmdMs) > 2500) {
             g_field_state = STATE_DISABLED;
+            fieldSetSeq = 0;
         }
     }
 }

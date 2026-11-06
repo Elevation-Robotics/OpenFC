@@ -40,7 +40,7 @@ export default function V13Docs() {
           and shows it at the top of its screen. Two of the Smart ports live on
           a second MCU, so the board carries two firmware images and is
           flashed in two steps. This page describes firmware{' '}
-          <T>0.1.4-bringup</T>.
+          <T>0.1.5-bringup</T>.
         </>
       }
     >
@@ -529,8 +529,8 @@ py timeline.py relay.jsonl --relay --states      # state frames against the cont
         <Table
           head={['Command', 'Payload']}
           rows={[
-            [<T key="c">FIELD_SET 0x06</T>, 'engaged, state (0/1/2), driver_ms LE32, auton_ms LE32, interlock'],
-            [<T key="c">FIELD_STATUS 0x07</T>, 'Result: engaged, state, then per port C and D: link, fm, pack (LE16), link acks, replugs, name (6 bytes)'],
+            [<T key="c">FIELD_SET 0x06</T>, 'engaged, state (0/1/2), driver_ms LE32, auton_ms LE32, interlock, seq'],
+            [<T key="c">FIELD_STATUS 0x07</T>, 'Result: engaged, state, then per port C and D: link, fm, pack (LE16), link acks, replugs, name (6 bytes); then the seq of the last field set applied'],
             [<T key="c">CAPTURE 0x08</T>, 'op (0 stop, 1 start, 2 status), port mask; result: used, size, dropped, records'],
             [<T key="c">CAPTURE_READ 0x09</T>, 'Result: next ≤ 32 bytes of the capture stream; flags bit0 = more'],
             [<T key="c">PING 0x01, RS485_RAW 0x02</T>, 'Link check; raw send or listen on C/D while disengaged'],
@@ -542,6 +542,13 @@ py timeline.py relay.jsonl --relay --states      # state frames against the cont
           stall ports A/B. After three failed requests in a row the ESP32
           pulses <T>RUN</T>, backing off from 5 s to 60 s while the RP2350 keeps
           failing, and re-sends the field state once it answers.
+        </p>
+        <p>
+          A request the RP2350 drops is invisible to the ESP32: the next poll
+          reads back the previous result, which is also OK. So each field set
+          carries a sequence number, and the ESP32 re-sends the field state
+          whenever the status poll reports a different one. A missed state
+          change on C/D is corrected within one poll (200 ms).
         </p>
         <Note kind="warn">
           Mode 1 is required: the RP2350&apos;s PL022 slave with CPHA=0 and CS

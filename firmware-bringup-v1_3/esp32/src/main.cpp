@@ -139,6 +139,9 @@ static bool rp2350Flashing = false;
 static uint32_t rp2350HoldoffUntilMs = 0;
 static bool rp2350NeedFieldSet = false;
 static uint32_t rp2350RetryMs = 5000;
+// Seq of the last FIELD_SET sent (1..255). The RP2350 echoes the last one it
+// applied in FIELD_STATUS; a mismatch means it missed one, so re-send.
+static uint8_t rp2350FieldSeq = 0;
 // Chrome throttles background tabs to >=1 s timers; 2500 ms tolerates that
 // (same rationale as the proven firmware's watchdog).
 static const uint32_t FIELD_WATCHDOG_MS = 2500;
@@ -1043,15 +1046,19 @@ static void rp2350Recover() {
 // SPI_CMD_FIELD_SET's documented format in openfc_spi_link.h exactly.
 static void sendFieldSetToRp2350() {
     if (rp2350Flashing) return;
-    uint8_t payload[11];
+    if (++rp2350FieldSeq == 0) rp2350FieldSeq = 1;   // 0 is the RP2350's "none applied"
+    uint8_t payload[12];
     payload[0] = fieldEngaged ? 1 : 0;
     payload[1] = (g_field_state == STATE_DRIVER) ? 1 : (g_field_state == STATE_AUTON) ? 2 : 0;
     memcpy(payload + 2, &g_driver_period_ms, 4);
     memcpy(payload + 6, &g_auton_period_ms, 4);
     payload[10] = g_field_interlock ? 1 : 0;
+    payload[11] = rp2350FieldSeq;
     SpiLinkFrame result;
     // Answered on the first poll (~6 ms); a short timeout keeps an absent
-    // RP2350 from stalling the A/B engines.
+    // RP2350 from stalling the A/B engines. An OK here doesn't prove the
+    // RP2350 applied it (a dropped request reads back the previous result);
+    // pollRp2350FieldStatus() checks the echoed seq and re-sends.
     rp2350Reachable = spiRequestAndWait(SPI_CMD_FIELD_SET, 0, 0, payload, sizeof(payload),
                                         &result, 30) && result.b0 == SPI_STATUS_OK;
 }
@@ -1065,7 +1072,8 @@ static void pollRp2350FieldStatus() {
     rp2350Reachable = ok;
     if (!ok) return;
     rp2350RetryMs = 5000;
-    if (rp2350NeedFieldSet) {
+    bool missedFieldSet = result.len >= 27 && result.payload[26] != rp2350FieldSeq;   // 26 bytes: RP2350 firmware without seq
+    if (rp2350NeedFieldSet || missedFieldSet) {
         rp2350NeedFieldSet = false;
         sendFieldSetToRp2350();
     }
