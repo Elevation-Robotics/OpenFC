@@ -8,10 +8,10 @@ Hardware, firmware, protocol and website are all open source. Build boards, sell
 
 | Board | MCUs | Ports | Firmware | Status |
 |---|---|---|---|---|
-| **V1.1** | ESP32-S3 | 4 competition ports | [`firmware/`](firmware/) | Production; certified releases |
-| **V1.3** | ESP32-S3 + RP2350 | 4 competition ports + 4 Smart ports | [`firmware-bringup-v1_3/`](firmware-bringup-v1_3/) | Prototype; not certified for competition |
+| **V1.1** | ESP32-S3 | 4 competition ports | [`firmware/`](firmware/) | Working for competition |
+| **V1.3** | ESP32-S3 + RP2350 | 4 competition ports + 4 Smart ports | [`firmware-bringup-v1_3/`](firmware-bringup-v1_3/) | Working for competition |
 
-The firmware version number is unrelated to the board revision.
+Both boards are in competition use. The firmware version number is unrelated to the board revision. The two boards run different firmware and speak different serial protocols, so each has its own flasher and docs page. The V1.3 firmware keeps the `bring-up` name and `bu_*` protocol from its development.
 
 ## Flashing a board
 

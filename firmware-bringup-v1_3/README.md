@@ -1,6 +1,6 @@
 # OpenFC V1.3 bring-up firmware
 
-Firmware for the **Open_FC_V1_3 REV A** prototype: an ESP32-S3 that talks to the PC and runs the legacy ports and Smart ports A/B, and an RP2350 that runs Smart ports C/D. It speaks the `bu_*` bring-up protocol, not the certified match protocol, and is kept apart from [`../firmware/`](../firmware/) so neither build can pick up the other.
+Firmware for the **Open_FC_V1_3 REV A** board: an ESP32-S3 that talks to the PC and runs the legacy ports and Smart ports A/B, and an RP2350 that runs Smart ports C/D. The board is in competition use on 0.1.6. It speaks the `bu_*` protocol, not the V1.1 board's match protocol, and is kept apart from [`../firmware/`](../firmware/) so neither build can pick up the other. The "bring-up" name dates from its development.
 
 The user-facing reference (ports, commands, the Smart-port protocol, flashing, troubleshooting) is the site's V1.3 docs page, [`app/docs/v1_3/page.tsx`](../app/docs/v1_3/page.tsx), served at `/docs/v1_3`. The board's design files (gerbers, BOM, pick and place, renders) are in [`public/hardware/`](../public/hardware/) as `openfc-v1_3-*` and listed at `/docs/hardware#v1_3-files`. This README covers working on the firmware.
 

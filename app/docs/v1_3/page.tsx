@@ -46,12 +46,11 @@ export default function V13Docs() {
         </>
       }
     >
-      <Note kind="warn">
-        Prototype hardware and bring-up firmware. The V1.3 images speak the{' '}
-        <T>bu_*</T> bring-up protocol, not the certified match protocol, and
-        are not certified for competition. The production{' '}
-        <L href="/docs/protocol">serial protocol</L> applies to hardware
-        revision 1.1 boards.
+      <Note>
+        The V1.3 board works for competition. Its firmware speaks its own{' '}
+        <T>bu_*</T> protocol, described on this page; the{' '}
+        <L href="/docs/protocol">serial protocol</L> and the{' '}
+        <L href="/docs/api">firmware API</L> describe the V1.1 board.
       </Note>
 
       <Section id="architecture" title="Architecture">
@@ -601,6 +600,7 @@ py timeline.py relay.jsonl --relay --states      # state frames against the cont
         <Table
           head={['Subsystem', 'Status']}
           rows={[
+            ['Competition use', 'Confirmed working for competition by the maintainers (2026-11, 0.1.6). The rows below are the earlier bench results.'],
             ['Legacy port polarity', 'Confirmed against a live V5 (2026-09-01).'],
             ['Field control, port B', 'Controller links and shows Disabled ~2 s after boot with no host; followed disabled → driver → auton → disabled → driver → disabled (2026-09-27, 0.1.4).'],
             ['Field control, port D', 'Same walk, on the RP2350 over SPI, with the name reported through FIELD_STATUS (2026-09-27, 0.1.4).'],

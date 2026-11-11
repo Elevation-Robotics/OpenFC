@@ -80,9 +80,10 @@ export default function Home() {
       <section className="mt-16 grid gap-6 sm:grid-cols-2">
         <Panel title="Build it yourself">
           <p>
-            The hardware, the firmware and this site are open source. An
-            ESP32-S3, four optocouplers and four RJ11 jacks — the schematic and
-            the build are public.
+            The hardware, the firmware and this site are open source. Two
+            boards, both working for competition: V1.1, an ESP32-S3 driving
+            four competition ports, and V1.3, which adds an RP2350 and four
+            Smart ports. The design files for both are public.
           </p>
           <p className="mt-2">
             <Link href="/docs/hardware" className="text-blue-400 hover:underline">
