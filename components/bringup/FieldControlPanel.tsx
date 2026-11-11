@@ -2,9 +2,10 @@
 
 // Field control for all four Smart ports (A/B on the ESP32, C/D on the
 // RP2350). From 0.1.4 the board boots engaged and Disabled; engaged, the
-// engines own the buses and raw port diagnostics are refused. The firmware
-// auto-disables driver/auton if this page stops pinging for 2.5 s (closing
-// the tab is an e-stop).
+// engines own the buses and raw port diagnostics are refused. From 0.1.6
+// driver/auton start a timed period on the board that runs to its end even
+// if this page stops pinging; closing the tab mid-period is not an e-stop.
+// Outside a period the firmware auto-disables after 2.5 s without a ping.
 
 import { useEffect, useRef, useState } from 'react';
 import { useSerial } from '@/components/SerialProvider';
@@ -36,9 +37,9 @@ export default function FieldControlPanel() {
     });
   }, [subscribe]);
 
-  // Keepalive: the firmware's watchdog drops driver/auton to disabled after
-  // 2.5 s without a ping. Ping at 1 Hz whenever engaged so an enabled state
-  // survives, and stopping (tab close, disconnect) acts as an e-stop.
+  // Keepalive: outside a timed period the firmware's watchdog drops
+  // driver/auton to disabled after 2.5 s without a ping. Ping at 1 Hz
+  // whenever engaged so an enabled state survives.
   useEffect(() => {
     if (!state.connected) return;
     const id = setInterval(() => {

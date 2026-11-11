@@ -109,6 +109,40 @@ bool g_field_interlock = false;
 static bool fieldEngaged = false;
 static uint32_t lastHostPingMs = 0;
 
+// Board-side period timer. field_state driver/auton starts it with that
+// mode's field_period length. While it runs the host watchdog is suspended,
+// so a host that drops mid-match leaves every port in its state until the
+// period ends here, as on the production firmware's timed periods. The end
+// disables every port, legacy included, and reports bu_match_end; a host
+// that reconnects reads the period back from bu_field (timed, remaining_ms).
+static bool periodActive = false;
+static uint32_t periodStartMs = 0;
+static uint32_t periodLengthMs = 0;
+// field_period sets the lengths the next period uses (and bu_field echoes
+// them). A running period keeps the ones it started with, because the A/B
+// engines and the RP2350 count down from g_*_period_ms: a host re-sending
+// its lengths mid-period must not cut the period short.
+static uint32_t hostDriverMs = 105000;
+static uint32_t hostAutonMs = 15000;
+
+// Reconnect preamble. On every (re)connect, Competition Control's V1.3
+// driver sends get_info, then field_state disabled (and waits for a
+// bu_field saying "disabled"), field_period and legacy_set off, before it
+// compares the board with its match. Applied mid-period, that disable would
+// blip every robot. So while a period runs, the first field_state disabled
+// and the first legacy_set off within RECONNECT_PREAMBLE_MS of a get_info
+// are answered but not applied: the reply says "disabled" with held:true,
+// and the next bu_field reports the real state. A host whose match is over
+// then sends a second disable, which applies at once.
+static const uint32_t RECONNECT_PREAMBLE_MS = 1000;
+static uint32_t preambleUntilMs = 0;
+static bool holdNextDisable = false;
+static bool holdNextLegacyOff = false;
+
+static bool inReconnectPreamble(uint32_t now) {
+    return periodActive && (int32_t)(preambleUntilMs - now) > 0;
+}
+
 // ─── Ports C/D status, proxied from the RP2350 over SPI ───
 // The session engines for C/D run ON the RP2350 (smart_link_rp.*, identical
 // protocol logic to linkA/linkB); this ESP32 only relays field_engage/
@@ -182,11 +216,12 @@ static size_t b64Decode(const char* in, uint8_t* out, size_t outCap) {
 static void handleCommand(const JsonDocument& doc);
 static void emitHello();
 static void emitError(const char* reason, const char* cmd);
-static void emitFieldState();
+static void emitFieldState(const char* heldState = nullptr);
 static void emitLegacyState();
 static void emitRp2350State();
 static void emitHeartbeat();
 static void doLegacySet(bool enable, const String& mode);
+static void endPeriod(const char* reason);
 static void doLegacyRaw(bool ed, bool ad);
 static void doRs485Raw(const JsonDocument& doc);
 static void doRs485Listen(const JsonDocument& doc);
@@ -329,8 +364,11 @@ void loop() {
 #endif
 
     if (fieldEngaged) {
-        // Host watchdog: drop to disabled if pings stop while enabled.
-        if (g_field_state != STATE_DISABLED &&
+        if (periodActive && now - periodStartMs >= periodLengthMs) endPeriod("timer");
+
+        // Host watchdog: drop to disabled if pings stop while enabled
+        // outside a timed period. A running period ends on its own timer.
+        if (g_field_state != STATE_DISABLED && !periodActive &&
             (now - lastHostPingMs >= FIELD_WATCHDOG_MS)) {
             g_field_state = STATE_DISABLED;
             showStatus(currentStatus());
@@ -356,19 +394,12 @@ void loop() {
         // KNOWN GAP: the RP2350 also auto-disables ITS copy of g_field_state
         // locally if C/D's countdown expires first, but does not report
         // that back over FIELD_STATUS — so on a C/D-triggered match end,
-        // A/B keeps streaming the old enabled state until the operator (or
-        // this watchdog) notices. Fine for today's link/session bring-up;
-        // flagging for whoever wires match-end symmetry properly.
+        // A/B keeps streaming the old enabled state until the period timer
+        // above ends it (C/D start counting after it, so that is moments
+        // later). Flagging for whoever wires match-end symmetry properly.
         if (linkA.matchEndPending || linkB.matchEndPending) {
             linkA.matchEndPending = linkB.matchEndPending = false;
-            if (g_field_state != STATE_DISABLED) {
-                g_field_state = STATE_DISABLED;
-                showStatus(currentStatus());
-                sendFieldSetToRp2350();
-                JsonDocument d; d["evt"] = "bu_match_end";
-                serializeJson(d, Serial); Serial.println();
-                emitFieldState();
-            }
+            if (g_field_state != STATE_DISABLED) endPeriod("port");
         }
         for (SmartLink* l : {&linkA, &linkB}) {
             if (l->swreplugPending) {
@@ -390,12 +421,35 @@ void loop() {
     if (rp2350Run && !rp2350Flashing && rp2350Fails >= 3 && now - rp2350LastResetMs > rp2350RetryMs) rp2350Recover();
 }
 
+// End the match on every port: the period's timer ran out ("timer") or a
+// Smart port's own countdown got there first ("port"). The legacy ports
+// have no timer of their own, so this is what takes them down when the
+// host is gone.
+static void endPeriod(const char* reason) {
+    periodActive = false;
+    g_field_state = STATE_DISABLED;
+    if (legacyEnable) {
+        doLegacySet(false, "driver");
+        emitLegacyState();
+    }
+    showStatus(currentStatus());
+    sendFieldSetToRp2350();
+    JsonDocument d; d["evt"] = "bu_match_end"; d["reason"] = reason;
+    serializeJson(d, Serial); Serial.println();
+    emitFieldState();
+}
+
 // ─── Command dispatch ───
 static void handleCommand(const JsonDocument& doc) {
     const char* cmd = doc["cmd"] | "";
 
     if (strcmp(cmd, "get_info") == 0) {
         emitHello();
+        if (fieldEngaged) emitFieldState();   // a reconnecting host sees any running period at once
+        if (periodActive) {
+            preambleUntilMs = millis() + RECONNECT_PREAMBLE_MS;
+            holdNextDisable = holdNextLegacyOff = true;
+        }
 
     } else if (strcmp(cmd, "ping") == 0) {
         lastHostPingMs = millis();  // feeds the field watchdog while enabled
@@ -408,6 +462,7 @@ static void handleCommand(const JsonDocument& doc) {
         fieldEngaged = on;
         g_field_interlock = doc["interlock"] | false;
         g_field_state = STATE_DISABLED;
+        periodActive = false;
         showStatus(currentStatus());
         linkA.reset(now);
         linkB.reset(now);
@@ -418,18 +473,40 @@ static void handleCommand(const JsonDocument& doc) {
     } else if (strcmp(cmd, "field_state") == 0) {
         if (!fieldEngaged) { emitError("not_engaged", "field_state"); return; }
         const char* st = doc["state"] | "disabled";
-        g_field_state = (strcmp(st, "driver") == 0) ? STATE_DRIVER
-                      : (strcmp(st, "auton") == 0)  ? STATE_AUTON
-                                                    : STATE_DISABLED;
-        showStatus(currentStatus());
-        lastHostPingMs = millis();
-        sendFieldSetToRp2350();
-        emitFieldState();
+        openfc_state_t next = (strcmp(st, "driver") == 0) ? STATE_DRIVER
+                            : (strcmp(st, "auton") == 0)  ? STATE_AUTON
+                                                          : STATE_DISABLED;
+        uint32_t now = millis();
+        bool held = holdNextDisable && next == STATE_DISABLED && inReconnectPreamble(now);
+        holdNextDisable = false;
+        lastHostPingMs = now;
+        if (held) {
+            emitFieldState("disabled");   // reconnect preamble: see above
+        } else {
+            if (next == STATE_DISABLED) {
+                periodActive = false;
+            } else if (!periodActive || next != g_field_state) {
+                // A new period. Re-sending the running state leaves it alone.
+                periodActive = true;
+                periodStartMs = now;
+                g_driver_period_ms = hostDriverMs;
+                g_auton_period_ms = hostAutonMs;
+                periodLengthMs = (next == STATE_DRIVER) ? g_driver_period_ms : g_auton_period_ms;
+            }
+            g_field_state = next;
+            showStatus(currentStatus());
+            sendFieldSetToRp2350();
+            emitFieldState();
+        }
 
     } else if (strcmp(cmd, "field_period") == 0) {
-        if (doc["driver"].is<int>()) g_driver_period_ms = (uint32_t)(int)doc["driver"];
-        if (doc["auton"].is<int>()) g_auton_period_ms = (uint32_t)(int)doc["auton"];
-        sendFieldSetToRp2350();
+        if (doc["driver"].is<int>()) hostDriverMs = (uint32_t)(int)doc["driver"];
+        if (doc["auton"].is<int>()) hostAutonMs = (uint32_t)(int)doc["auton"];
+        if (!periodActive) {
+            g_driver_period_ms = hostDriverMs;
+            g_auton_period_ms = hostAutonMs;
+            sendFieldSetToRp2350();
+        }
         emitFieldState();
 
 #if OPENFC_DEVTOOLS
@@ -441,7 +518,9 @@ static void handleCommand(const JsonDocument& doc) {
         const char* mode = doc["mode"] | "driver";
         String modeStr(mode);
         if (modeStr != "driver" && modeStr != "auto") modeStr = "driver";
-        doLegacySet(enable, modeStr);
+        bool held = holdNextLegacyOff && !enable && legacyEnable && inReconnectPreamble(millis());
+        holdNextLegacyOff = false;
+        if (!held) doLegacySet(enable, modeStr);   // held: reconnect preamble, see above
         JsonDocument ack; ack["evt"] = "ack"; ack["cmd"] = "legacy_set";
         serializeJson(ack, Serial); Serial.println();
         emitLegacyState();
@@ -1244,15 +1323,20 @@ static void emitHeartbeat() {
     serializeJson(doc, Serial); Serial.println();
 }
 
-static void emitFieldState() {
+static void emitFieldState(const char* heldState) {
     uint32_t now = millis();
     JsonDocument doc;
     doc["evt"] = "bu_field";
     doc["engaged"] = fieldEngaged;
-    doc["state"] = fieldStateName(g_field_state);
-    doc["driver_ms"] = (int)g_driver_period_ms;
-    doc["auton_ms"] = (int)g_auton_period_ms;
+    doc["state"] = heldState ? heldState : fieldStateName(g_field_state);
+    if (heldState) doc["held"] = true;
+    doc["driver_ms"] = (int)hostDriverMs;
+    doc["auton_ms"] = (int)hostAutonMs;
     doc["interlock"] = g_field_interlock;
+    // The running period, for a host that reconnects mid-match.
+    uint32_t elapsed = now - periodStartMs;
+    doc["timed"] = periodActive;
+    doc["remaining_ms"] = (int)(periodActive && elapsed < periodLengthMs ? periodLengthMs - elapsed : 0);
     JsonArray ports = doc["ports"].to<JsonArray>();
     for (SmartLink* l : {&linkA, &linkB}) {
         JsonObject p = ports.add<JsonObject>();

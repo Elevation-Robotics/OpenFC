@@ -9,8 +9,9 @@
 //            The board times each period itself and reports timer_expired.
 //   v13    — V1.3 bring-up firmware (lib/openfc-bringup-protocol.ts). Drives the
 //            Smart ports with field_period + field_state and the legacy ports
-//            with legacy_set. The legacy ports have no board-side timer on this
-//            firmware, so the host disables everything itself when a period ends.
+//            with legacy_set. The host disables everything itself when a period
+//            ends; from 0.1.6 the board also ends the period on its own timer,
+//            legacy ports included, if the host has gone away.
 
 import { BoardMode, OpenFCEvent, PeriodToken, cmd } from './openfc-protocol';
 import { bringupCmd } from './openfc-bringup-protocol';
@@ -87,9 +88,10 @@ export function v13Board(send: SendFn): MatchBoard {
       setState(mode === 'auto' ? 'auton' : 'driver');
       send(bringupCmd.legacySet(true, mode));
     },
-    // No period tokens on this firmware: a reconnect within the 2.5 s field
-    // watchdog finds the period still running; after it, the board has
-    // already disabled and a blind re-arm could re-enable after the match.
+    // No period tokens on this firmware. From 0.1.6 the board keeps a period
+    // running while the host is away and ends it on its own timer, so a
+    // reconnect finds it still running or already over; a blind re-arm could
+    // re-enable after the match.
     rearm: () => {},
     disable: disableAll,
     periodEnded: disableAll,
@@ -98,8 +100,8 @@ export function v13Board(send: SendFn): MatchBoard {
       const raw = evt as unknown as { evt: string; reason?: string; cmd?: string };
       if (raw.evt === 'bu_match_end') return 'expired';
       if (raw.evt === 'bu_field_watchdog') {
-        // The board only drops the Smart ports; the legacy ports have no
-        // watchdog, so take them down too.
+        // Outside a timed period the board only drops the Smart ports; the
+        // legacy ports have no watchdog, so take them down too.
         send(bringupCmd.legacySet(false, 'driver'));
         return 'watchdog';
       }

@@ -136,6 +136,8 @@ Power-cycle the controller when it starts so the handshake is recorded. The boar
 
 - A period that ends on C/D first isn't reported back to the ESP32 (the RP2350 already sends its state in `FIELD_STATUS` byte 1; the ESP32 ignores it).
 - Each port starts its countdown when its controller first receives the new state.
-- The legacy ports have no comms watchdog and don't follow `field_state`.
+- The legacy ports have no comms watchdog outside a timed period and don't follow `field_state`; the end of a timed period disables them.
+- While a timed period runs, the host watchdog is suspended: a host that goes away leaves the robots in their state until the period ends on the board.
+- To ride through Competition Control's reconnect sequence, the first `field_state disabled` and `legacy_set` off within 1 s of a `get_info` are held (not applied) while a period runs. A host that reconnects and must stop the robots immediately has to send a second disable.
 - On 0.1.4, port A hasn't been bench-tested and port C only for the boot link (same code as B and D).
 - The RP2350 builds for a stock Pico 2 board target, not the RP2354A.

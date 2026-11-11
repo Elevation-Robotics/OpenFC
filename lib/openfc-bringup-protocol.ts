@@ -154,6 +154,16 @@ export interface BringupFieldState {
   auton_ms: number;
   /** From 0.1.2: true when driver/auton are held until the controller is in A7 field mode. */
   interlock?: boolean;
+  /** From 0.1.6: a timed period is running on the board. */
+  timed?: boolean;
+  /** From 0.1.6: ms left in the running period, 0 when none. */
+  remaining_ms?: number;
+  /**
+   * From 0.1.6: this reply is to a disable the board held because it came
+   * just after a reconnect's get_info while a period runs; `state` is the
+   * command, not the outputs. The next bu_field reports the real state.
+   */
+  held?: boolean;
   ports: BringupFieldPort[];
 }
 
@@ -318,9 +328,11 @@ export const bringupCmd = {
   /**
    * Field control (the real ported OpenFC-Smart engine, ports A+B in
    * unison). While engaged the engines own the buses — raw port
-   * diagnostics are refused with `field_engaged`. The firmware drops
-   * driver/auton back to disabled if pings stop for 2.5 s, so the panel
-   * must ping every ~1 s while a state is commanded.
+   * diagnostics are refused with `field_engaged`. Outside a timed period
+   * the firmware drops driver/auton back to disabled if pings stop for
+   * 2.5 s, so the panel must ping every ~1 s while engaged. From 0.1.6
+   * driver/auton start a timed period that keeps running without pings
+   * and ends on the board.
    */
   /**
    * From 0.1.4 the engine streams the commanded state to any linked

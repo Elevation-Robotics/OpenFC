@@ -40,7 +40,7 @@ export default function V13Docs() {
           and shows it at the top of its screen. Two of the Smart ports live on
           a second MCU, so the board carries two firmware images and is
           flashed in two steps. This page describes firmware{' '}
-          <T>0.1.5-bringup</T>.
+          <T>0.1.6-bringup</T>.
         </>
       }
     >
@@ -135,20 +135,47 @@ export default function V13Docs() {
           A host changes the state with <T>field_state</T> (<T>disabled</T>,{' '}
           <T>driver</T> or <T>auton</T>). The state applies to all four Smart
           ports; the controller follows within one status frame (about 20 ms).
-          While driver or auton is commanded, the host must send a{' '}
-          <T>ping</T> (or any field command) at least every 2.5 s, or the
-          board drops back to Disabled and reports{' '}
-          <T>bu_field_watchdog</T>. The bring-up console pings once a second
-          while engaged.
+          From 0.1.6, <T>driver</T> or <T>auton</T> starts a timed period on
+          the board, and the board keeps it running if the host goes away: the
+          robots keep their state until the period ends. The host should still
+          send a <T>ping</T> about once a second while engaged.
         </p>
         <ul className="ml-5 list-disc space-y-2">
           <li>
-            <strong>Match timer.</strong> Each port counts down its period (
-            <T>field_period</T>, default 105 s driver and 15 s auton) from the
-            moment its controller first receives the new state, and sends the
-            remaining time with every state frame. The first port to reach
-            zero ends the period for the ESP32&apos;s ports and reports{' '}
-            <T>bu_match_end</T>; see the limitations for C/D.
+            <strong>Match timer.</strong> The board times each period from the{' '}
+            <T>field_state</T> that starts it, using that mode&apos;s{' '}
+            <T>field_period</T> (default 105 s driver and 15 s auton). Sending
+            the running state again does not restart it, and a{' '}
+            <T>field_period</T> sent mid-period applies to the next period, not
+            the running one. When it runs out the
+            board disables every port, the legacy ports included, and reports{' '}
+            <T>bu_match_end</T> with <T>reason</T> <T>timer</T>. A host that
+            reconnects reads the period back from <T>bu_field</T>:{' '}
+            <T>timed</T> and <T>remaining_ms</T>.
+          </li>
+          <li>
+            <strong>Controller countdown.</strong> Each Smart port also counts
+            the period down from the moment its controller first receives the
+            new state, and sends the remaining time with every state frame. If
+            a port reaches zero before the board&apos;s timer, it ends the
+            period the same way, with <T>reason</T> <T>port</T>.
+          </li>
+          <li>
+            <strong>Reconnect.</strong> A host that reconnects mid-period sends{' '}
+            <T>get_info</T>. For the next second, the first{' '}
+            <T>field_state</T> <T>disabled</T> and the first{' '}
+            <T>legacy_set</T> off are answered but not applied: the reply says{' '}
+            <T>disabled</T> with <T>held</T> <T>true</T>, and the robots keep
+            their state. This absorbs Competition Control&apos;s reconnect
+            sequence, which disables before it looks at its match. The next{' '}
+            <T>bu_field</T> reports the real state; a second disable applies at
+            once.
+          </li>
+          <li>
+            <strong>Host watchdog.</strong> Outside a timed period, a host that
+            commands driver or auton must send a <T>ping</T> (or any field
+            command) at least every 2.5 s, or the board drops back to Disabled
+            and reports <T>bu_field_watchdog</T>.
           </li>
           <li>
             <strong>Robot name.</strong> Each port in <T>bu_field</T> reports{' '}
@@ -160,7 +187,8 @@ export default function V13Docs() {
           <li>
             <strong>Legacy ports.</strong> These follow <T>legacy_set</T>{' '}
             only. They are not driven by <T>field_state</T>, so a host running a
-            match on both kinds of port has to command both.
+            match on both kinds of port has to command both. The end of a timed
+            period disables them too.
           </li>
           <li>
             <strong>Diagnostics.</strong> While engaged the engines own the
@@ -174,8 +202,9 @@ export default function V13Docs() {
           board. For each period it sends <T>field_period</T>,{' '}
           <T>field_state</T> and <T>legacy_set</T>, so robots on the Smart
           ports and the legacy ports run together, and pings four times a
-          second. It ends every period itself, disabling both kinds of port,
-          because the legacy ports have no board-side timer. The match
+          second. It ends every period itself, disabling both kinds of port;
+          from 0.1.6 the board also ends it on its own timer if the page goes
+          away. The match
           screen&apos;s footer lists the linked Smart ports and their robot
           names.
         </p>
@@ -579,9 +608,9 @@ py timeline.py relay.jsonl --relay --states      # state frames against the cont
       <Section id="limitations" title="Known limitations">
         <ul className="ml-5 list-disc space-y-2">
           <li>
-            A period that ends on ports C/D first is not reported back to the
-            ESP32, so A/B and the LEDs stay enabled until the host sends a
-            disable or the watchdog fires.
+            A period that ends on ports C/D&apos;s own countdown first is not
+            reported back to the ESP32; A/B, the legacy ports and the LEDs stay
+            enabled until the board&apos;s period timer ends it.
           </li>
           <li>
             Each port starts its countdown when its controller first receives
@@ -589,9 +618,16 @@ py timeline.py relay.jsonl --relay --states      # state frames against the cont
             few frames apart.
           </li>
           <li>
-            The legacy ports have no comms watchdog: a <T>legacy_set</T>{' '}
-            enable stays live if the host goes away, and they do not follow{' '}
-            <T>field_state</T>.
+            The legacy ports have no comms watchdog: outside a timed period, a{' '}
+            <T>legacy_set</T> enable stays live if the host goes away, and they
+            do not follow <T>field_state</T>.
+          </li>
+          <li>
+            While a timed period runs the board cannot be stopped from the host
+            if the host is gone: the robots keep their state until the period
+            ends. A host that reconnects stops them with its second disable,
+            or with its first one sent more than a second after{' '}
+            <T>get_info</T>.
           </li>
           <li>
             The capture ring fills in about 25 s of one port in session, and
