@@ -14,6 +14,11 @@
 //
 // OpenFC V1_3 BRING-UP firmware (RP2350 "Serial Expander") — v2.
 //
+// VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc. (IFI).
+// OpenFC is an independent project of Elevation Robotics and is not affiliated
+// with, manufactured, endorsed, approved or sponsored by Innovation First, Inc.,
+// VEX Robotics or the Robotics Education & Competition Foundation (RECF).
+//
 // Runs the proven Smart-port field-control session engines for ports C/D
 // (smart_link_rp.*) and answers the ESP32 over a CS-framed slave SPI link.
 // Flashed in-circuit BY THE ESP32 over bit-banged SWD (see the ESP32

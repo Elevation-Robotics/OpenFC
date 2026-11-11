@@ -50,13 +50,14 @@ export default function DocsHome() {
             <Link href="/docs/hardware" className="text-blue-400 hover:underline">
               Hardware
             </Link>{' '}
-            — schematic, pin map and build notes.
+            — design files for the V1.1 and V1.3 boards, the V1.1 pin map and
+            build notes.
           </li>
           <li>
             <Link href="/docs/v1_3" className="text-blue-400 hover:underline">
               V1.3 dual-MCU board
             </Link>{' '}
-            — the ESP32-S3 + RP2350 prototype: two-step flashing and the
+            — the ESP32-S3 + RP2350 board: pins, two-step flashing and the
             inter-MCU protocols.
           </li>
           <li>

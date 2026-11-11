@@ -3,13 +3,14 @@ import Link from 'next/link';
 import DocsLayout, { Note, Section, T, Table } from '@/components/docs/DocsLayout';
 import { REPO_URL } from '@/lib/site';
 
-// Hardware reference. Pin map and constants mirror firmware/src/openfc_pins.h,
-// which is the normative source.
+// Hardware reference for both board revisions. V1.1 pin map and constants
+// mirror firmware/src/openfc_pins.h, which is the normative source; V1.3 pins
+// and firmware are on /docs/v1_3.
 
 // Published design files, served from public/hardware/. Sizes are stated so a
 // visitor knows what a download costs before starting one; the 3D model and
 // outline are zipped because both are large plain-text formats.
-const HARDWARE_FILES = [
+const V1_1_FILES = [
   {
     href: '/hardware/openfc-v1-gerbers.zip',
     label: 'Gerbers and drill files',
@@ -54,11 +55,65 @@ const HARDWARE_FILES = [
   },
 ];
 
+// V1.3 REV A as exported from Altium Designer for fabrication and assembly.
+const V1_3_FILES = [
+  {
+    href: '/hardware/openfc-v1_3-gerbers.zip',
+    label: 'Gerbers and drill files',
+    format: 'RS-274X + Excellon, zip',
+    size: '1.7 MB',
+  },
+  {
+    href: '/hardware/openfc-v1_3-bom.xlsx',
+    label: 'Bill of materials',
+    format: 'XLSX',
+    size: '19 KB',
+  },
+  {
+    href: '/hardware/openfc-v1_3-pick-and-place.csv',
+    label: 'Pick and place',
+    format: 'CSV',
+    size: '32 KB',
+  },
+  {
+    href: '/hardware/openfc-v1_3-top.png',
+    label: 'Assembly render, top',
+    format: 'PNG',
+    size: '240 KB',
+  },
+  {
+    href: '/hardware/openfc-v1_3-bottom.png',
+    label: 'Assembly render, bottom',
+    format: 'PNG',
+    size: '133 KB',
+  },
+];
+
 export const metadata: Metadata = {
   title: 'Hardware — OpenFC',
   description:
-    'OpenFC hardware reference: ESP32-S3 field controller for VEX V5, optically isolated across four competition ports.',
+    'OpenFC hardware reference: the V1.1 and V1.3 field controller boards for VEX V5, their design files, pin maps and build notes.',
 };
+
+function FileTable({ files }: { files: { href: string; label: string; format: string; size: string }[] }) {
+  return (
+    <Table
+      head={['File', 'Format', 'Size']}
+      rows={files.map((f) => [
+        <a
+          key={f.href}
+          href={f.href}
+          download
+          className="text-blue-400 hover:underline"
+        >
+          {f.label}
+        </a>,
+        <T key={`${f.href}-f`}>{f.format}</T>,
+        f.size,
+      ])}
+    />
+  );
+}
 
 export default function HardwareDocs() {
   return (
@@ -67,17 +122,20 @@ export default function HardwareDocs() {
       active="/docs/hardware"
       intro={
         <>
-          An ESP32-S3 driving four VEX V5 Competition Switch ports through
-          optocouplers. Hardware revision 1.1. The dual-MCU prototype that
-          adds RS-485 Smart ports is documented separately under{' '}
+          Two board revisions are published. <strong>V1.1</strong> is an
+          ESP32-S3 driving four VEX V5 Competition Switch ports through
+          optocouplers; most of this page describes it. <strong>V1.3</strong>{' '}
+          adds an RP2350 and four RS-485 Smart ports; its hardware and design
+          files are <a href="#v1_3" className="text-blue-400 hover:underline">below</a>,
+          and its pins, firmware and protocols are on{' '}
           <Link href="/docs/v1_3" className="text-blue-400 hover:underline">
             V1.3 dual-MCU board
           </Link>
-          .
+          . Both are published under <T>CERN-OHL-P-2.0</T>.
         </>
       }
     >
-      <Section id="overview" title="Overview">
+      <Section id="overview" title="V1.1 overview">
         <Table
           head={['', '']}
           rows={[
@@ -96,7 +154,7 @@ export default function HardwareDocs() {
         </p>
       </Section>
 
-      <Section id="pins" title="Pin map">
+      <Section id="pins" title="V1.1 pin map">
         <p>
           Each port carries an ENABLE/DISABLE line and a DRIVER/AUT line. All
           four ports move together.
@@ -130,7 +188,7 @@ export default function HardwareDocs() {
         </p>
       </Section>
 
-      <Section id="timing" title="Firmware constants">
+      <Section id="timing" title="V1.1 firmware constants">
         <Table
           head={['Constant', 'Value', 'Meaning']}
           rows={[
@@ -164,7 +222,7 @@ export default function HardwareDocs() {
         />
       </Section>
 
-      <Section id="building" title="Building the firmware">
+      <Section id="building" title="Building the V1.1 firmware">
         <p>
           PlatformIO, with the target and build flags pinned in{' '}
           <T>firmware/platformio.ini</T>.
@@ -182,7 +240,7 @@ export default function HardwareDocs() {
         </p>
       </Section>
 
-      <Section id="files" title="Design files">
+      <Section id="files" title="V1.1 design files">
         <p>
           The full design is published under <T>CERN-OHL-P-2.0</T> — free to
           manufacture, modify and sell. See the{' '}
@@ -192,21 +250,7 @@ export default function HardwareDocs() {
           . The board was drawn in EasyEDA Pro; the gerbers below are what the
           fabricator needs and are readable by any CAM tool.
         </p>
-        <Table
-          head={['File', 'Format', 'Size']}
-          rows={HARDWARE_FILES.map((f) => [
-            <a
-              key={f.href}
-              href={f.href}
-              download
-              className="text-blue-400 hover:underline"
-            >
-              {f.label}
-            </a>,
-            <T key={`${f.href}-f`}>{f.format}</T>,
-            f.size,
-          ])}
-        />
+        <FileTable files={V1_1_FILES} />
         <p>
           Fabrication was ordered from the gerber archive as-is: 4 layers, 1.6 mm
           FR-4, 1 oz copper, HASL. The pick-and-place and BOM files are formatted
@@ -231,12 +275,80 @@ export default function HardwareDocs() {
         </p>
       </Section>
 
+      <Section id="v1_3" title="V1.3 board">
+        <p>
+          Board <T>Open_FC_V1_3 REV A</T> (BOM and placement files:{' '}
+          <T>PN 001 REV 003</T>). The ESP32-S3 talks to the PC and runs the
+          legacy ports and Smart ports A/B; the RP2350 runs Smart ports C/D and
+          is programmed by the ESP32-S3 over SWD. Pin maps, firmware, flashing
+          and the Smart-port protocol are on{' '}
+          <Link href="/docs/v1_3" className="text-blue-400 hover:underline">
+            V1.3 dual-MCU board
+          </Link>
+          .
+        </p>
+        <Table
+          head={['', '']}
+          rows={[
+            ['Host MCU', <T key="m">ESP32-S3-WROOM-1-N8</T>],
+            ['Smart-port MCU', <T key="r">RP2354A</T>],
+            ['USB bridge', <T key="u">CH340C</T>],
+            ['Legacy ports', '4, driven in unison; PC817C optocoupler per signal (8 total)'],
+            ['Smart ports', <>4 × RS-485, <T key="t">THVD2450</T> transceiver per port</>],
+            ['Status LEDs', '3 addressable RGB (STATUS, BLE, CONTROL)'],
+            ['Buttons', 'BOOT, RESET, IO12, IO13; slide power switch'],
+            ['Power', <>USB-C, <T key="c">TP4056</T> battery charging on a 2-pin JST XH, <T key="p">TPS2116</T> power mux, 3.3 V LDO</>],
+            ['Header', '6-pin: RX, GND, TX, DIO, GND, CLK'],
+          ]}
+        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          {/* Plain <img>: the static export has no image optimizer. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/hardware/openfc-v1_3-top.png"
+            alt="OpenFC V1.3 REV A assembly render, top side"
+            width={1281}
+            height={866}
+            className="h-auto w-full rounded-lg border border-gray-800"
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/hardware/openfc-v1_3-bottom.png"
+            alt="OpenFC V1.3 REV A assembly render, bottom side"
+            width={1281}
+            height={866}
+            className="h-auto w-full rounded-lg border border-gray-800"
+          />
+        </div>
+      </Section>
+
+      <Section id="v1_3-files" title="V1.3 design files">
+        <p>
+          Exported from Altium Designer for fabrication and assembly, and
+          published under <T>CERN-OHL-P-2.0</T> like V1.1.
+        </p>
+        <FileTable files={V1_3_FILES} />
+        <p>
+          REV A was ordered from these files with SMT assembly from JLCPCB: 4
+          layers (top, GND, PWR, bottom), 1.6 mm FR-4, 1 oz outer and 0.5 oz
+          inner copper, 123.4 × 84.8 mm. The pick-and-place file lists 185
+          placements, 174 on the top side and 11 on the bottom.
+        </p>
+        <Note>
+          The Altium project and a schematic PDF for V1.3 are not published
+          yet. Everything a fabricator needs to build the board — gerbers,
+          drills, BOM and placement — is listed above.
+        </Note>
+      </Section>
+
       <Section id="disclaimer" title="Not VEX hardware">
         <p>
-          OpenFC is an independent open-source project of Elevation Robotics. It
-          is not manufactured, endorsed, approved or sponsored by VEX Robotics
-          or the REC Foundation, and is not affiliated with either. Those names
-          appear here only to describe what the board is compatible with.
+          VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc.
+          (IFI). OpenFC is an independent open-source project of Elevation
+          Robotics and is not affiliated with, manufactured, endorsed, approved
+          or sponsored by Innovation First, Inc., VEX Robotics or the Robotics
+          Education &amp; Competition Foundation (RECF). Those names appear here
+          only to describe what the board is compatible with.
         </p>
       </Section>
     </DocsLayout>

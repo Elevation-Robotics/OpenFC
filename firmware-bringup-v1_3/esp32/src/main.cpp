@@ -14,6 +14,11 @@
 //
 // OpenFC V1_3 BRING-UP firmware (ESP32-S3 side) — NOT production firmware.
 //
+// VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc. (IFI).
+// OpenFC is an independent project of Elevation Robotics and is not affiliated
+// with, manufactured, endorsed, approved or sponsored by Innovation First, Inc.,
+// VEX Robotics or the Robotics Education & Competition Foundation (RECF).
+//
 // Exercises every subsystem on the new "Open_FC_V1_3 REV A" prototype in
 // isolation, over the same JSON-lines-over-USB framing style as the
 // certified firmware/src/main.cpp, so it's easy to test from a browser

@@ -62,11 +62,12 @@ export default function SiteFooter() {
       </div>
 
       <p className="mt-6 text-center text-xs text-gray-600">
-        VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc. OpenFC
-        is an independent project of Elevation Robotics and is not affiliated
-        with, manufactured, endorsed, approved or sponsored by Innovation First,
-        Inc., VEX Robotics or the REC Foundation. Those names are used only to
-        describe what the board is compatible with.
+        VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc.
+        (IFI). OpenFC is an independent project of Elevation Robotics and is
+        not affiliated with, manufactured, endorsed, approved or sponsored by
+        Innovation First, Inc., VEX Robotics or the Robotics Education &amp;
+        Competition Foundation (RECF). Those names are used only to describe
+        what the board is compatible with.
       </p>
     </footer>
   );

@@ -61,9 +61,9 @@ export default function Home() {
         <h2 className="text-xl font-semibold">How it works</h2>
         <ol className="mt-4 space-y-3">
           <Step n={1} title="Flash the board">
-            Connect over USB and install the certified firmware in one click. The
-            page hashes what is actually running and tells you whether it matches
-            an official release.
+            Pick your board revision, connect over USB, and install the latest
+            firmware for it. On a V1.1 board the page hashes what is actually
+            running and tells you whether it matches an official release.
           </Step>
           <Step n={2} title="Set your periods">
             Autonomous, driver, or a full match. Move between periods yourself or

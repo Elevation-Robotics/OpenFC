@@ -28,8 +28,9 @@ ESP-IDF (Apache-2.0), both from Espressif Systems.
 Trademarks
 --------------------------------------------------------------------------
 
-VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc. OpenFC
-is an independent project of Elevation Robotics and is not affiliated
-with, manufactured, endorsed, approved or sponsored by Innovation First,
-Inc., VEX Robotics or the REC Foundation. These names are used only to
-describe hardware compatibility.
+VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc. (IFI).
+OpenFC is an independent project of Elevation Robotics and is not
+affiliated with, manufactured, endorsed, approved or sponsored by
+Innovation First, Inc., VEX Robotics or the Robotics Education &
+Competition Foundation (RECF). These names are used only to describe
+hardware compatibility.

@@ -40,7 +40,9 @@ export default function V13Docs() {
           and shows it at the top of its screen. Two of the Smart ports live on
           a second MCU, so the board carries two firmware images and is
           flashed in two steps. This page describes firmware{' '}
-          <T>0.1.6-bringup</T>.
+          <T>0.1.6-bringup</T>. The gerbers, BOM, pick-and-place file and
+          board renders are under{' '}
+          <L href="/docs/hardware#v1_3-files">Hardware</L>.
         </>
       }
     >
@@ -312,15 +314,22 @@ export default function V13Docs() {
 
       <Section id="flashing" title="Flashing from the browser">
         <p>
-          Open the <L href="/flash/v1_3">V1.3 flasher</L> in Chrome or Edge,
-          connect the board over USB, and run the two steps in order.
+          Open the <L href="/flash">flasher</L> in Chrome or Edge, choose the
+          V1.3 board, connect it over USB, and run the two steps in order. The
+          flasher offers the latest published V1.3 release.
         </p>
         <ol className="ml-5 list-decimal space-y-2">
           <li>
             <strong>ESP32-S3.</strong> esptool-js writes the merged image
             (bootloader + partition table + app) at <T>0x0</T>, exactly as on
-            the <L href="/flash">standard flasher</L>. The board reboots and
+            the <L href="/flash/v1_1">V1.1 flasher</L>. The board reboots and
             answers <T>get_info</T> with <T>bu_hello</T>. About 30 seconds.
+            <br />
+            <strong>Then unplug and replug the board.</strong> The RP2350 step
+            does not work until the board has been power-cycled after the
+            ESP32-S3 flash. Unplug the USB cable, wait a few seconds, and plug
+            it back in; the page reconnects on its own. The flasher holds step
+            2 until it has seen the link drop.
           </li>
           <li>
             <strong>RP2350.</strong> The browser streams the image to the ESP32
@@ -333,7 +342,8 @@ export default function V13Docs() {
         </ol>
         <p>
           Step 2 is only enabled once the board has identified itself with{' '}
-          <T>bu_hello</T>, which is why the ESP32 is flashed first. Afterwards{' '}
+          <T>bu_hello</T>, which is why the ESP32 is flashed first, and, after
+          a step 1 on the same page, once the board has been power-cycled. Afterwards{' '}
           <strong>SPI ping</strong> should report the RP2350 answering. To test
           a local build, open <em>Flash a custom build instead</em> on either
           step: the merged image for the ESP32, the raw <T>firmware.bin</T>{' '}
@@ -667,6 +677,13 @@ py timeline.py relay.jsonl --relay --states      # state frames against the cont
                 Check the flash reported <T>received</T> equal to the image size;
                 a short image leaves the RP2350 in its bootrom. Reflash from the
                 same release as the ESP32.
+              </>,
+            ],
+            [
+              <>Step 2 disabled, &quot;Unplug the board and plug it back in&quot;</>,
+              <>
+                Step 1 just finished and the board has not been power-cycled.
+                Unplug the USB cable, wait a few seconds, and plug it back in.
               </>,
             ],
             [
