@@ -36,6 +36,22 @@
   ],
   "v13_releases": [
     {
+      "version": "0.1.6-bringup",
+      "released": "2026-11-10",
+      "description": "Keeps the match period running when the host drops, and rides through a Competition Control reconnect",
+      "changelog": "Release build (no bus capture or relay). Driver and auton now start a timed period on the board. If the host goes away mid-period the robots keep their state, instead of dropping to Disabled after 2.5 s, and the board ends the period on its own timer, disabling every port including the legacy ports (bu_match_end, reason timer). bu_field reports timed and remaining_ms for a host that reconnects. Competition Control's reconnect, which disables before it looks at its match, no longer blips the robots: while a period runs, the first disable and legacy-off within 1 s of get_info are answered but held, and a second disable (the match was stopped) applies at once. field_period sent mid-period applies to the next period. Only the ESP32 image changed; the RP2350 image is the same as 0.1.5. Bench-tested with a robot on a legacy port through a host outage and a simulated Competition Control reconnect; not yet tested with the Competition Control app or with controllers on the Smart ports.",
+      "esp32": {
+        "download_url": "/firmware/openfc-v13-esp32-0.1.6-bringup-merged.bin",
+        "sha256": "29cabd04fecf3c0c7fc2b77a7327fcf0177efd5db9ea4946405613945210b588",
+        "size": 391360
+      },
+      "rp2350": {
+        "download_url": "/firmware/openfc-v13-rp2350-0.1.6-bringup.bin",
+        "sha256": "b985418783e5527a3517700bd0c6036e7c6068415cd4ed1cebaba06422859c84",
+        "size": 52496
+      }
+    },
+    {
       "version": "0.1.5-bringup",
       "released": "2026-10-20",
       "description": "Fixes Smart ports C/D staying disabled after a state change",
