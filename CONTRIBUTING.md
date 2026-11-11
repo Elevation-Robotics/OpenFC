@@ -42,10 +42,12 @@ Add or update tests in `tests/` when you change `lib/`. If you change a command,
 
 Releases are published by adding the binary to `public/firmware/` and an entry to `public/firmware/manifest.json`:
 
-- **V1.1:** `official_releases`. Only set `certified_for_competition: true` once the release has been verified on hardware, because the site and the API tell users that build is safe for competition.
+- **V1.1:** `official_releases`.
 - **V1.3:** `v13_releases`. Use `firmware-bringup-v1_3/tools/publish_firmware.py`, which builds the `release` environment and prints the entry.
 
-`npm run build` checks every published binary against its manifest hash.
+For both boards, only set `certified_for_competition: true` once the release has been verified on hardware. Each flasher offers the newest certified release for its board, and the firmware API tells users that build is safe for competition.
+
+`npm run build` checks every published binary against its manifest hash (and, for V1.3, its size).
 
 ### Hardware
 

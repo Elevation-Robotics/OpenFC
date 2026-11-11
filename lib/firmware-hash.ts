@@ -41,6 +41,8 @@ export interface V13Release {
   released: string;
   description: string;
   changelog: string;
+  /** Optional for manifests published before V1.3 releases were certified. */
+  certified_for_competition?: boolean;
   esp32: V13Image;
   rp2350: V13Image;
 }
@@ -149,11 +151,16 @@ export async function fetchOfficialFirmware(): Promise<OfficialFirmware> {
   return { release, data };
 }
 
-/** The newest V1.3 release, or null when the manifest has none. */
+/**
+ * The V1.3 release the flasher offers: the newest certified one, or the
+ * newest of all when none is certified. Null when the manifest has none.
+ */
 export function latestV13Release(manifest: FirmwareManifest): V13Release | null {
-  const list = manifest.v13_releases ?? [];
+  const list = (manifest.v13_releases ?? [])
+    .slice()
+    .sort((a, b) => (a.released < b.released ? 1 : -1));
   if (list.length === 0) return null;
-  return list.slice().sort((a, b) => (a.released < b.released ? 1 : -1))[0];
+  return list.find((r) => r.certified_for_competition) ?? list[0];
 }
 
 /**

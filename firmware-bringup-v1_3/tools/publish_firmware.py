@@ -97,6 +97,7 @@ def main() -> None:
         "version": version,
         "released": "YYYY-MM-DD",
         "description": "",
+        "certified_for_competition": False,
         "changelog": "",
         "esp32": {
             "download_url": f"/firmware/{esp_out.name}",

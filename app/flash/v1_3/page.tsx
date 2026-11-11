@@ -214,9 +214,14 @@ export default function FlashV13Page() {
       )}
       {release && (
         <div className="mb-6 rounded-lg border border-gray-800 bg-gray-900/30 px-4 py-3 text-sm">
-          <p className="text-gray-200">
+          <p className="flex flex-wrap items-center gap-x-2 text-gray-200">
             <span className="font-semibold">v{release.version}</span>
-            <span className="text-gray-500"> · released {release.released}</span>
+            <span className="text-gray-500">· released {release.released}</span>
+            {release.certified_for_competition && (
+              <span className="rounded bg-green-900/50 px-2 py-0.5 text-xs font-semibold text-green-300">
+                Certified for competition
+              </span>
+            )}
           </p>
           <p className="mt-1 text-gray-400">{release.description}.</p>
           <details className="mt-2">

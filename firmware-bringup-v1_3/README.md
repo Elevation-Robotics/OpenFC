@@ -63,7 +63,7 @@ py bringup_cli.py --port COM3 cmd '{"cmd":"rp2350_spi","op":"ping"}'
 
 The CLI and the web flasher check that every 384-byte chunk arrives whole and that the final byte count matches the image. A short image leaves the RP2350 in its bootrom (SWD answers, SPI doesn't).
 
-**Publishing** to the web flasher: `py tools/publish_firmware.py` builds the `release` env of both projects, writes the merged ESP32 image and the RP2350 image into `public/firmware/`, and prints the `v13_releases` entry to add to `public/firmware/manifest.json`. The flasher offers the entry with the newest `released` date. Check the published hello says `"devtools":false`.
+**Publishing** to the web flasher: `py tools/publish_firmware.py` builds the `release` env of both projects, writes the merged ESP32 image and the RP2350 image into `public/firmware/`, and prints the `v13_releases` entry to add to `public/firmware/manifest.json`, with `certified_for_competition: false`. The flasher offers the newest certified entry, falling back to the newest entry when none is certified. Set the flag to `true` once the release is verified for competition, which also marks it certified in the firmware API. Check the published hello says `"devtools":false`.
 
 ## How the Smart-port engine works
 

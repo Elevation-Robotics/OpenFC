@@ -47,10 +47,11 @@ export default function V13Docs() {
       }
     >
       <Note>
-        The V1.3 board works for competition. Its firmware speaks its own{' '}
-        <T>bu_*</T> protocol, described on this page; the{' '}
-        <L href="/docs/protocol">serial protocol</L> and the{' '}
-        <L href="/docs/api">firmware API</L> describe the V1.1 board.
+        The V1.3 board works for competition, and its certified releases are
+        listed in the <L href="/docs/api">firmware API</L>. Its firmware
+        speaks its own <T>bu_*</T> protocol, described on this page; the{' '}
+        <L href="/docs/protocol">serial protocol</L> page describes the V1.1
+        board.
       </Note>
 
       <Section id="architecture" title="Architecture">
@@ -389,7 +390,10 @@ py bringup_cli.py --port COM3 engage --state driver --secs 30`}</Code>
         <p>
           <T>tools/publish_firmware.py</T> builds both release images, merges
           the ESP32 image, copies both into <T>public/firmware/</T> and prints
-          the <T>v13_releases</T> manifest entry the web flasher reads.
+          the <T>v13_releases</T> manifest entry the web flasher reads. The
+          entry starts with <T>certified_for_competition</T> set to{' '}
+          <T>false</T>. The flasher offers the newest certified release, so a
+          new release reaches users once that is set to <T>true</T>.
         </p>
       </Section>
 
