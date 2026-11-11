@@ -1,16 +1,21 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 // Copyright 2026 Mack Kemper
+// Portions copyright the OpenOCD contributors and Raspberry Pi Ltd, from
+// raspberrypi/openocd (sdk-2.0.0): the flash flow and the RCP-init and
+// batch-call stubs from src/flash/nor/rp2040.c, and the dormant-to-SWD
+// sequence from swd.c. OpenOCD is GPL-2.0-or-later.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// This file is free software: you can redistribute it and/or modify it under
+// the terms of the GNU General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option)
+// any later version. It is distributed WITHOUT ANY WARRANTY; without even the
+// implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+// LICENSE-GPL-3.0 at the repository root.
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Because this file is linked into it, the V1.3 ESP32-S3 firmware image as a
+// whole is distributed under GPL-3.0-or-later. The project's other source
+// files remain Apache-2.0, which is compatible with GPL-3.0.
 //
 // See swd_rp2350.h for provenance. Register/constant sources are cited
 // inline; the flash flow mirrors raspberrypi/openocd rp2040.c (sdk-2.0.0).

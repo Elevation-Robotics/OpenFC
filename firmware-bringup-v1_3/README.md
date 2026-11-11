@@ -2,7 +2,7 @@
 
 Firmware for the **Open_FC_V1_3 REV A** prototype: an ESP32-S3 that talks to the PC and runs the legacy ports and Smart ports A/B, and an RP2350 that runs Smart ports C/D. It speaks the `bu_*` bring-up protocol, not the certified match protocol, and is kept apart from [`../firmware/`](../firmware/) so neither build can pick up the other.
 
-The user-facing reference (ports, commands, the Smart-port protocol, flashing, troubleshooting) is the site's V1.3 docs page, [`app/docs/v1_3/page.tsx`](../app/docs/v1_3/page.tsx), served at `/docs/v1_3`. This README covers working on the firmware.
+The user-facing reference (ports, commands, the Smart-port protocol, flashing, troubleshooting) is the site's V1.3 docs page, [`app/docs/v1_3/page.tsx`](../app/docs/v1_3/page.tsx), served at `/docs/v1_3`. The board's design files (gerbers, BOM, pick and place, renders) are in [`public/hardware/`](../public/hardware/) as `openfc-v1_3-*` and listed at `/docs/hardware#v1_3-files`. This README covers working on the firmware.
 
 ## Layout
 
@@ -50,6 +50,8 @@ The version string lives in `esp32/platformio.ini` (`OPENFC_FW_VERSION`) and is 
 ```
 cd esp32 && pio run -t upload
 ```
+
+**Then unplug the board and plug it back in.** After the ESP32 has been flashed, the RP2350 step does not work until the board has been power-cycled. The web flasher enforces this; with the CLI, do it by hand.
 
 **RP2350**, through the ESP32's SWD bridge (the RP2350 has no USB or BOOTSEL path on this board):
 
@@ -141,3 +143,11 @@ Power-cycle the controller when it starts so the handshake is recorded. The boar
 - To ride through Competition Control's reconnect sequence, the first `field_state disabled` and `legacy_set` off within 1 s of a `get_info` are held (not applied) while a period runs. A host that reconnects and must stop the robots immediately has to send a second disable.
 - On 0.1.4, port A hasn't been bench-tested and port C only for the boot link (same code as B and D).
 - The RP2350 builds for a stock Pico 2 board target, not the RP2354A.
+
+## License
+
+Apache-2.0, except `esp32/src/swd_rp2350.cpp` and `esp32/include/swd_rp2350.h`, which contain code from OpenOCD and are GPL-3.0-or-later. Because those files are linked into it, the ESP32-S3 image as a whole is GPL-3.0-or-later. The RP2350 image stays Apache-2.0. See [`NOTICE`](../NOTICE).
+
+## Trademarks
+
+VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc. (IFI). OpenFC is an independent project of Elevation Robotics and is not affiliated with, manufactured, endorsed, approved or sponsored by Innovation First, Inc., VEX Robotics or the Robotics Education & Competition Foundation (RECF). These names are used only to describe hardware compatibility.

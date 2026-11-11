@@ -1,174 +1,69 @@
-'use client';
-
-// Firmware flasher page. See spec §7.
-//
-// Two paths share one flash routine: the official one-click install (the
-// default, and the only one most users need) and a custom .bin for people
-// developing firmware. Both go through runFlash so port ownership and recovery
-// behave identically.
-
-import { useCallback, useState } from 'react';
 import Link from 'next/link';
-import BrowserGate from '@/components/BrowserGate';
-import ConnectButton from '@/components/ConnectButton';
 import SiteFooter from '@/components/SiteFooter';
-import FirmwareVerifier from '@/components/flash/FirmwareVerifier';
-import FirmwareUploader, {
-  SelectedFirmware,
-} from '@/components/flash/FirmwareUploader';
-import FlashProgress from '@/components/flash/FlashProgress';
-import OfficialFirmwareCard from '@/components/flash/OfficialFirmwareCard';
-import PinDiagnostics from '@/components/flash/PinDiagnostics';
-import { useSerial } from '@/components/SerialProvider';
-import { flashFirmware } from '@/lib/esptool-flash';
-import { fetchOfficialFirmware } from '@/lib/firmware-hash';
-import { cmd } from '@/lib/openfc-protocol';
 
-export default function FlashPage() {
-  const { state, getConnection, send } = useSerial();
-  const [selected, setSelected] = useState<SelectedFirmware | null>(null);
-  const [flashing, setFlashing] = useState(false);
-  const [pct, setPct] = useState(0);
-  const [message, setMessage] = useState('');
-  const [log, setLog] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+// Firmware flasher entry point. The two board revisions take different images
+// and different flash procedures, so the board is chosen before anything is
+// written: /flash/v1_1 for the single-MCU board, /flash/v1_3 for the dual-MCU
+// board. Each flasher offers the latest published release for its board.
 
-  /** Flash an already-fetched image. `prepare` runs before the port is taken. */
-  const runFlash = useCallback(
-    async (prepare: () => Promise<ArrayBuffer>) => {
-      const conn = getConnection();
-      if (!conn || !conn.port) {
-        setError('Connect a board before flashing.');
-        return;
-      }
-      setError(null);
-      setFlashing(true);
-      setPct(0);
-      setMessage('Starting…');
-      setLog([]);
+const BOARDS = [
+  {
+    href: '/flash/v1_1',
+    name: 'V1.1',
+    summary: 'Single ESP32-S3. Four competition ports.',
+    steps: 'One step, about 30 seconds.',
+  },
+  {
+    href: '/flash/v1_3',
+    name: 'V1.3',
+    summary:
+      'ESP32-S3 plus RP2350. Four competition ports and four Smart ports.',
+    steps:
+      'Two steps: the ESP32-S3, then unplug and replug the board, then the RP2350.',
+  },
+];
 
-      const onProgress = (p: number, msg: string) => {
-        if (p >= 0) setPct(p);
-        if (msg) {
-          setMessage(msg);
-          setLog((prev) => [...prev, msg]);
-        }
-      };
-
-      const port = conn.port;
-      let paused = false;
-      try {
-        // Download and verify before touching the port, so a failed download
-        // never leaves the board mid-flash.
-        const data = await prepare();
-        await conn.pauseForFlash();
-        paused = true;
-        await flashFirmware(port, data, onProgress);
-        await conn.resumeAfterFlash();
-        paused = false;
-        // Refresh identity after reboot; the board re-emits hello on get_info.
-        setTimeout(() => {
-          void send(cmd.getInfo());
-          void send(cmd.getState());
-        }, 500);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Flash failed.';
-        onProgress(-1, `Error: ${msg}`);
-        setError(msg);
-        // Restore the JSON read loop so the board stays usable.
-        if (paused) {
-          try {
-            await conn.resumeAfterFlash();
-          } catch {
-            // ignore
-          }
-        }
-      } finally {
-        setFlashing(false);
-      }
-    },
-    [getConnection, send],
-  );
-
-  const flashOfficial = useCallback(
-    () =>
-      runFlash(async () => {
-        setMessage('Downloading official firmware…');
-        const { data } = await fetchOfficialFirmware();
-        return data;
-      }),
-    [runFlash],
-  );
-
-  const flashCustom = useCallback(() => {
-    if (!selected) return;
-    void runFlash(async () => selected.data);
-  }, [runFlash, selected]);
-
+export default function FlashChooser() {
   return (
     <main className="mx-auto max-w-2xl px-6 py-8">
-      <BrowserGate />
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <Link href="/" className="text-sm text-gray-500 hover:text-gray-300">
-            ← OpenFC
-          </Link>
-          <h1 className="text-2xl font-bold">Flash Firmware — V1 Board</h1>
-          <p className="mt-1 text-sm text-gray-400">
-            For the original single-MCU V1 board (one ESP32, hardware rev 1.1).
-            The firmware version number is unrelated to the board revision.
-          </p>
-        </div>
-        <ConnectButton />
+      <div className="mb-6">
+        <Link href="/" className="text-sm text-gray-500 hover:text-gray-300">
+          ← OpenFC
+        </Link>
+        <h1 className="text-2xl font-bold">Flash Firmware</h1>
+        <p className="mt-1 text-sm text-gray-400">
+          Which board do you have? The two revisions take different firmware,
+          so pick yours before connecting. The firmware version number is
+          unrelated to the board revision.
+        </p>
       </div>
 
-      <section className="mb-6">
-        <FirmwareVerifier />
-      </section>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {BOARDS.map((b) => (
+          <Link
+            key={b.href}
+            href={b.href}
+            className="rounded-xl border border-gray-700 bg-gray-900/50 p-5 transition hover:border-blue-500 hover:bg-gray-900"
+          >
+            <h2 className="text-lg font-semibold">{b.name} board</h2>
+            <p className="mt-2 text-sm text-gray-400">{b.summary}</p>
+            <p className="mt-3 text-xs text-gray-500">{b.steps}</p>
+            <p className="mt-4 text-sm font-semibold text-blue-400">
+              Flash the {b.name} board →
+            </p>
+          </Link>
+        ))}
+      </div>
 
-      <section className="mb-6">
-        <OfficialFirmwareCard
-          onFlash={() => void flashOfficial()}
-          busy={flashing}
-        />
-      </section>
-
-      <FlashProgress active={flashing} pct={pct} message={message} log={log} />
-      {error && <p className="mt-3 text-center text-sm text-red-400">{error}</p>}
-
-      <p className="mt-6 rounded-lg border border-yellow-900/60 bg-yellow-950/20 px-4 py-3 text-sm text-yellow-200">
-        Have a V1.3 dual-MCU board (ESP32-S3 plus RP2350 Smart-port expander)?
-        Do not flash it from this page. It takes two different images — use
-        the{' '}
-        <Link href="/flash/v1_3" className="text-blue-400 hover:underline">
-          V1.3 flasher
-        </Link>
-        .
+      <p className="mt-6 text-sm text-gray-500">
+        Not sure? Count the jacks. A V1.1 board has four. A V1.3 board has
+        eight, four on each side, and <em>OPEN FC V1_3</em> on the silkscreen.
+        See{' '}
+        <Link href="/docs/hardware" className="text-blue-400 hover:underline">
+          Hardware
+        </Link>{' '}
+        for photos and design files.
       </p>
-
-      <details className="mt-8 rounded-lg border border-gray-800 bg-gray-900/30 p-4">
-        <summary className="cursor-pointer text-sm font-semibold text-gray-300">
-          Flash a custom build
-        </summary>
-        <p className="mt-2 text-sm text-gray-500">
-          For firmware development. A custom build is not certified, and the
-          field controller will flag the board as unverified.
-        </p>
-        <div className="mt-4">
-          <FirmwareUploader onSelect={setSelected} disabled={flashing} />
-        </div>
-        <button
-          onClick={flashCustom}
-          disabled={!state.connected || !selected || flashing}
-          className="mt-4 w-full rounded-md border border-gray-600 px-4 py-2.5 text-sm font-semibold text-gray-100 transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {flashing ? 'Flashing…' : 'Flash Custom Firmware'}
-        </button>
-      </details>
-
-      <section className="mt-8">
-        <PinDiagnostics />
-      </section>
 
       <SiteFooter />
     </main>

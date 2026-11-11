@@ -9,6 +9,10 @@
 //      browser just streams base64 chunks as bring-up JSON commands over the
 //      live link (lib/rp2350-flash.ts). Requires step 1's firmware running.
 //
+// Between the two the board has to be power-cycled: after step 1 the RP2350
+// step is held until the serial link has dropped (the USB cable was
+// unplugged) and the board has identified itself again.
+//
 // See /docs/v1_3 for the procedure and the wire protocol behind step 2.
 
 import { useCallback, useEffect, useState } from 'react';
@@ -34,8 +38,12 @@ import {
   isBringupEvent,
 } from '@/lib/openfc-bringup-protocol';
 import { flashRp2350 } from '@/lib/rp2350-flash';
+import { REPO_URL } from '@/lib/site';
 
 type Target = 'esp32' | 'rp2350';
+
+/** Power cycle between the steps: not asked for, waiting for the unplug, seen. */
+type PowerCycle = 'none' | 'needed' | 'done';
 
 export default function FlashV13Page() {
   const { state, getConnection, send, subscribe } = useSerial();
@@ -48,6 +56,7 @@ export default function FlashV13Page() {
   const [error, setError] = useState<string | null>(null);
   const [bringupSeen, setBringupSeen] = useState(false);
   const [ping, setPing] = useState<BringupSpiResult | 'pending' | null>(null);
+  const [powerCycle, setPowerCycle] = useState<PowerCycle>('none');
 
   useEffect(() => {
     let cancelled = false;
@@ -82,6 +91,7 @@ export default function FlashV13Page() {
     if (!state.connected) {
       setBringupSeen(false);
       setPing(null);
+      setPowerCycle((p) => (p === 'needed' ? 'done' : p));
     }
   }, [state.connected]);
 
@@ -129,6 +139,8 @@ export default function FlashV13Page() {
         await flashFirmware(port, data, onProgress);
         await conn.resumeAfterFlash();
         paused = false;
+        setPowerCycle('needed');
+        onProgress(100, 'ESP32-S3 done. Unplug the board, plug it back in, then run step 2.');
         setTimeout(() => void send(bringupCmd.getInfo()), 800);
       } catch (e) {
         fail(e);
@@ -165,9 +177,11 @@ export default function FlashV13Page() {
   );
 
   const rpBlocked =
-    state.connected && !bringupSeen
-      ? 'This board has not identified itself as V1.3 bring-up firmware. Flash the ESP32 (step 1) first, or click Identify.'
-      : null;
+    powerCycle === 'needed'
+      ? 'Unplug the board and plug it back in before step 2.'
+      : state.connected && !bringupSeen
+        ? 'This board has not identified itself as V1.3 bring-up firmware. Flash the ESP32 (step 1) first, or click Identify.'
+        : null;
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-8">
@@ -175,13 +189,13 @@ export default function FlashV13Page() {
       <div className="mb-6 flex items-center justify-between">
         <div>
           <Link href="/flash" className="text-sm text-gray-500 hover:text-gray-300">
-            ← Flash Firmware
+            ← Choose board
           </Link>
-          <h1 className="text-2xl font-bold">Flash V1.3 Firmware</h1>
+          <h1 className="text-2xl font-bold">Flash Firmware — V1.3 Board</h1>
           <p className="mt-1 text-sm text-gray-400">
-            Dual-MCU board: the ESP32-S3 is flashed over USB, then it flashes
-            the RP2350 for you. Prototype firmware — not certified for
-            competition.{' '}
+            Dual-MCU board: the ESP32-S3 is flashed over USB, the board is
+            unplugged and plugged back in, then the ESP32-S3 flashes the RP2350
+            for you. Prototype firmware — not certified for competition.{' '}
             <Link href="/docs/v1_3" className="text-blue-400 hover:underline">
               Read the procedure
             </Link>
@@ -231,6 +245,8 @@ export default function FlashV13Page() {
             holds the RP2350 in reset until step 2 releases it. About 30 s.
           </p>
         </V13StepCard>
+
+        <PowerCycleCard state={powerCycle} connected={state.connected} />
 
         <V13StepCard
           step={2}
@@ -295,8 +311,50 @@ export default function FlashV13Page() {
         </Link>
         . Command-line alternative: <code>firmware-bringup-v1_3/tools/bringup_cli.py</code>.
       </p>
+      <p className="mt-2 text-xs text-gray-600">
+        The ESP32-S3 image is licensed GPL-3.0-or-later and the RP2350 image
+        Apache-2.0. Source for both is in <code>firmware-bringup-v1_3/</code> of
+        the{' '}
+        <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">
+          repository
+        </a>
+        ; see the{' '}
+        <Link href="/docs/license" className="text-blue-400 hover:underline">
+          license
+        </Link>
+        .
+      </p>
 
       <SiteFooter />
     </main>
+  );
+}
+
+/** The unplug/replug between the steps; the RP2350 step stays held until it is seen. */
+function PowerCycleCard({ state, connected }: { state: PowerCycle; connected: boolean }) {
+  const tone =
+    state === 'needed'
+      ? 'border-yellow-700/70 bg-yellow-950/30 text-yellow-100'
+      : state === 'done'
+        ? 'border-green-800/70 bg-green-950/20 text-green-100'
+        : 'border-gray-800 bg-gray-900/30 text-gray-400';
+  return (
+    <section className={`rounded-xl border p-5 text-sm ${tone}`}>
+      <h2 className="font-semibold">Between the steps: unplug and replug the board</h2>
+      {state === 'done' ? (
+        <p className="mt-1">
+          {connected
+            ? 'Power cycle seen and the board is back. Run step 2.'
+            : 'Unplugged. Plug the board back in; it reconnects on its own, or click Connect.'}
+        </p>
+      ) : (
+        <p className="mt-1">
+          After step 1, the RP2350 step only works once the board has been
+          power-cycled. Unplug the USB cable, wait a few seconds, and plug it
+          back in.
+          {state === 'needed' && ' Step 1 is done; do this now.'}
+        </p>
+      )}
+    </section>
   );
 }
