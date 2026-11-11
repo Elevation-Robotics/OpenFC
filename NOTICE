@@ -1,28 +1,66 @@
 OpenFC
-Copyright 2026 Mack Kemper
+Copyright 2026 Mack Kemper and the OpenFC contributors
 
 This product includes software developed as part of the OpenFC project
 (https://github.com/Elevation-Robotics/OpenFC), a project of Elevation Robotics
 (https://elevationrobotics.org).
 
-Licensed under the Apache License, Version 2.0. See LICENSE.
+Software is licensed under the Apache License, Version 2.0. See LICENSE.
+Exception: see "GPL-licensed code" below.
 
-The hardware design (schematic, PCB layout, gerbers and bill of materials)
-is licensed under CERN-OHL-P-2.0. See LICENSE-hardware.
+The hardware designs for both board revisions (V1.1 and V1.3: schematic,
+PCB layout, gerbers, bill of materials, placement files and renders under
+public/hardware/) are licensed under CERN-OHL-P-2.0. See LICENSE-hardware.
+
+Contributions are accepted under the same licences (Apache-2.0 section 5;
+CERN-OHL-P-2.0 for hardware). Contributors keep the copyright in their work.
+
+--------------------------------------------------------------------------
+GPL-licensed code
+--------------------------------------------------------------------------
+
+firmware-bringup-v1_3/esp32/src/swd_rp2350.cpp and
+firmware-bringup-v1_3/esp32/include/swd_rp2350.h contain code from OpenOCD
+(raspberrypi/openocd, GPL-2.0-or-later; copyright the OpenOCD contributors
+and Raspberry Pi Ltd) and are licensed under GPL-3.0-or-later. See
+LICENSE-GPL-3.0.
+
+Because those files are linked into it, the V1.3 ESP32-S3 firmware image
+(public/firmware/openfc-v13-esp32-*.bin) is distributed under
+GPL-3.0-or-later. Its corresponding source is this repository at the
+commit that published the image. The V1.1 firmware, the V1.3 RP2350
+firmware and the web application do not contain this code.
 
 --------------------------------------------------------------------------
 Third-party components
 --------------------------------------------------------------------------
 
-This project depends on, but does not redistribute the source of, the
-following. Their licences apply to their own code:
+Their licences apply to their own code.
 
-  esptool-js            Apache-2.0   Espressif Systems
-  Next.js, React        MIT          Vercel, Meta
-  Tailwind CSS          MIT          Tailwind Labs
+Bundled into the web application served to browsers:
 
-The firmware builds against the Arduino core for ESP32 (LGPL-2.1) and the
-ESP-IDF (Apache-2.0), both from Espressif Systems.
+  esptool-js            Apache-2.0           Espressif Systems
+  pako                  MIT AND Zlib         (dependency of esptool-js)
+  Next.js, React        MIT                  Vercel, Meta
+
+Used to build the web application only:
+
+  Tailwind CSS          MIT                  Tailwind Labs
+
+Statically linked into the published firmware images (public/firmware/):
+
+  Arduino core for ESP32   LGPL-2.1-or-later  Espressif Systems  (ESP32-S3)
+  ESP-IDF                  Apache-2.0         Espressif Systems  (ESP32-S3)
+  ArduinoJson              MIT                Benoit Blanchon    (ESP32-S3)
+  Adafruit NeoPixel        LGPL-3.0           Adafruit           (V1.3 ESP32-S3)
+  Arduino-Pico core        LGPL-2.1-or-later  Earle F. Philhower (V1.3 RP2350)
+  Raspberry Pi Pico SDK    BSD-3-Clause       Raspberry Pi Ltd   (V1.3 RP2350)
+
+The LGPL libraries are unmodified and their source is available from
+their upstream projects. The complete source and build configuration of
+the OpenFC firmware is in this repository (firmware/ and
+firmware-bringup-v1_3/), so anyone can rebuild an image against a
+modified version of those libraries.
 
 --------------------------------------------------------------------------
 Trademarks

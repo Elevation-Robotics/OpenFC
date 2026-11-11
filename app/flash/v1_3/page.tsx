@@ -38,6 +38,7 @@ import {
   isBringupEvent,
 } from '@/lib/openfc-bringup-protocol';
 import { flashRp2350 } from '@/lib/rp2350-flash';
+import { REPO_URL } from '@/lib/site';
 
 type Target = 'esp32' | 'rp2350';
 
@@ -309,6 +310,19 @@ export default function FlashV13Page() {
           bring-up console
         </Link>
         . Command-line alternative: <code>firmware-bringup-v1_3/tools/bringup_cli.py</code>.
+      </p>
+      <p className="mt-2 text-xs text-gray-600">
+        The ESP32-S3 image is licensed GPL-3.0-or-later and the RP2350 image
+        Apache-2.0. Source for both is in <code>firmware-bringup-v1_3/</code> of
+        the{' '}
+        <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">
+          repository
+        </a>
+        ; see the{' '}
+        <Link href="/docs/license" className="text-blue-400 hover:underline">
+          license
+        </Link>
+        .
       </p>
 
       <SiteFooter />

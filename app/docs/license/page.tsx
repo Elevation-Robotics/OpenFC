@@ -45,11 +45,27 @@ export default function LicenseDocs() {
               <T key="a">Apache-2.0</T>,
             ],
             [
-              'Hardware design — schematic, PCB layout, gerbers, BOM',
+              'Hardware design, V1.1 and V1.3 — schematic, PCB layout, gerbers, BOM',
               <T key="c">CERN-OHL-P-2.0</T>,
+            ],
+            [
+              <>
+                V1.3 SWD flashing code (<T key="f">swd_rp2350.*</T>), and so the
+                V1.3 ESP32-S3 firmware image as a whole
+              </>,
+              <T key="g">GPL-3.0-or-later</T>,
             ],
           ]}
         />
+        <p>
+          The V1.3 board&apos;s ESP32-S3 programs the RP2350 with code taken
+          from OpenOCD, which is GPL-licensed. Those two files carry the GPL,
+          and because they are linked into it, so does the V1.3 ESP32-S3
+          firmware image. Everything else stays Apache-2.0. Apache-2.0 code
+          may be combined into a GPL-3.0 work, so nothing else changes. The
+          published firmware images also contain third-party libraries under
+          their own licences (LGPL, MIT, BSD), listed in <T>NOTICE</T>.
+        </p>
         <p>
           Apache-2.0 is written in terms of source code and object code, which
           does not describe a circuit board well. CERN-OHL-P is its hardware
@@ -71,7 +87,9 @@ export default function LicenseDocs() {
           </li>
           <li>
             <strong>Modify anything</strong> and keep your changes private. You
-            are not obliged to publish them.
+            are not obliged to publish them. The one exception is the V1.3
+            ESP32-S3 firmware: if you distribute a modified build of it, the
+            GPL requires you to offer its source too.
           </li>
           <li>
             <strong>Redistribute</strong> under these terms or as part of a
@@ -161,8 +179,8 @@ ${REPO_URL}`}</Code>
       <Section id="full" title="Full texts">
         <p>
           The complete licences are in the repository as <T>LICENSE</T>{' '}
-          (Apache-2.0), <T>LICENSE-hardware</T> (CERN-OHL-P-2.0) and{' '}
-          <T>NOTICE</T>.
+          (Apache-2.0), <T>LICENSE-hardware</T> (CERN-OHL-P-2.0),{' '}
+          <T>LICENSE-GPL-3.0</T> and <T>NOTICE</T>.
         </p>
         <p>
           <a

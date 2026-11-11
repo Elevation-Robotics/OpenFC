@@ -144,6 +144,10 @@ Power-cycle the controller when it starts so the handshake is recorded. The boar
 - On 0.1.4, port A hasn't been bench-tested and port C only for the boot link (same code as B and D).
 - The RP2350 builds for a stock Pico 2 board target, not the RP2354A.
 
+## License
+
+Apache-2.0, except `esp32/src/swd_rp2350.cpp` and `esp32/include/swd_rp2350.h`, which contain code from OpenOCD and are GPL-3.0-or-later. Because those files are linked into it, the ESP32-S3 image as a whole is GPL-3.0-or-later. The RP2350 image stays Apache-2.0. See [`NOTICE`](../NOTICE).
+
 ## Trademarks
 
 VEX, VEX Robotics and V5 are trademarks of Innovation First, Inc. (IFI). OpenFC is an independent project of Elevation Robotics and is not affiliated with, manufactured, endorsed, approved or sponsored by Innovation First, Inc., VEX Robotics or the Robotics Education & Competition Foundation (RECF). These names are used only to describe hardware compatibility.
