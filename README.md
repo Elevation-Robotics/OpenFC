@@ -8,14 +8,14 @@ Hardware, firmware, protocol and website are all open source. Build boards, sell
 
 | Board | MCUs | Ports | Firmware | Status |
 |---|---|---|---|---|
-| **V1.1** | ESP32-S3 | 4 competition ports | [`firmware/`](firmware/) | Production; certified releases |
-| **V1.3** | ESP32-S3 + RP2350 | 4 competition ports + 4 Smart ports | [`firmware-bringup-v1_3/`](firmware-bringup-v1_3/) | Prototype; not certified for competition |
+| **V1.1** | ESP32-S3 | 4 competition ports | [`firmware/`](firmware/) | Working for competition |
+| **V1.3** | ESP32-S3 + RP2350 | 4 competition ports + 4 Smart ports | [`firmware-bringup-v1_3/`](firmware-bringup-v1_3/) | Working for competition |
 
-The firmware version number is unrelated to the board revision.
+Both boards are in competition use. The firmware version number is unrelated to the board revision. The two boards run different firmware and speak different serial protocols, so each has its own flasher and docs page. The V1.3 firmware keeps the `bring-up` name and `bu_*` protocol from its development.
 
 ## Flashing a board
 
-Open [openfc.dev/flash](https://openfc.dev/flash) in Chrome or Edge (Web Serial is required), pick your board revision and connect over USB. The flasher installs the latest release for that board.
+Open [openfc.dev/flash](https://openfc.dev/flash) in Chrome or Edge (Web Serial is required), pick your board revision and connect over USB. The flasher installs the latest competition-certified release for that board: currently 1.4.0 for V1.1 and 0.1.6 for V1.3.
 
 - **V1.1:** one step, about 30 seconds.
 - **V1.3:** two steps. Flash the ESP32-S3, **unplug the board and plug it back in**, then flash the RP2350. The flasher will not start the second step until it has seen the power cycle.
@@ -26,7 +26,7 @@ The site's docs are the reference. Their source is in `app/docs/`.
 
 - [Integration guide](https://openfc.dev/docs): drive the board from Python, Node or the browser
 - [Serial protocol](https://openfc.dev/docs/protocol): every command and event (V1.1)
-- [Firmware API](https://openfc.dev/docs/api): verify a board runs an official build
+- [Firmware API](https://openfc.dev/docs/api): certified releases and hashes for both boards, to verify a board or firmware file is an official build
 - [Hardware](https://openfc.dev/docs/hardware): design files for both boards, V1.1 pin map
 - [V1.3 board](https://openfc.dev/docs/v1_3): pins, Smart-port protocol, two-step flashing
 - [License](https://openfc.dev/docs/license)

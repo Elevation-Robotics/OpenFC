@@ -14,7 +14,7 @@ import DocsLayout, {
 export const metadata: Metadata = {
   title: 'Firmware API — OpenFC',
   description:
-    'Public HTTP API for OpenFC firmware releases. Verify that a board is running an official, competition-certified build.',
+    'Public HTTP API for OpenFC firmware releases for the V1.1 and V1.3 boards. Verify that a board or a firmware file is an official, competition-certified build.',
 };
 
 export default function ApiDocs() {
@@ -25,8 +25,9 @@ export default function ApiDocs() {
       intro={
         <>
           A public, unauthenticated HTTP API listing every published firmware
-          release and its cryptographic hashes. Use it to confirm a board is
-          running official, competition-legal firmware.
+          release for both boards, V1.1 and V1.3, and its cryptographic
+          hashes. Use it to confirm a board or a firmware file is official,
+          competition-legal firmware.
         </>
       }
     >
@@ -63,15 +64,21 @@ export default function ApiDocs() {
             ],
             [
               <T key="e">GET /api/v1/firmware/latest.json</T>,
-              'The newest competition-certified release.',
+              <>
+                The newest competition-certified release: <T key="a">latest</T>{' '}
+                (V1.1) and <T key="b">latest_v13</T> (V1.3).
+              </>,
             ],
             [
               <T key="e">GET /api/v1/firmware/releases.json</T>,
-              'Every published release, newest first.',
+              <>
+                Every published release, newest first: <T key="a">releases</T>{' '}
+                (V1.1) and <T key="b">v13_releases</T> (V1.3).
+              </>,
             ],
             [
               <T key="e">GET /api/v1/firmware/hashes.json</T>,
-              'SHA-256 → release lookup, for verifying a connected board.',
+              'SHA-256 → release lookup for both boards, for verifying a connected board or a firmware file.',
             ],
           ]}
         />
@@ -80,23 +87,54 @@ export default function ApiDocs() {
       <Section id="latest" title="Latest certified firmware">
         <p>
           Answers &ldquo;what should this board be running?&rdquo;{' '}
-          <T>latest</T> is <T>null</T> if nothing is currently certified.
+          <T>latest</T> (V1.1) and <T>latest_v13</T> (V1.3) are each{' '}
+          <T>null</T> if nothing is currently certified for that board.
         </p>
         <Code label="GET /api/v1/firmware/latest.json">{`{
   "api_version": "v1",
-  "generated_at": "2026-07-31T01:39:53.093Z",
+  "generated_at": "2026-11-11T19:00:00.000Z",
   "latest": {
-    "version": "1.3.0",
+    "version": "1.4.0",
     "released": "2026-07-31",
-    "description": "Adds get_info and closes the raw-diagnostics watchdog gap",
+    "description": "Protocol 3: period tokens, resync, end_period and device binding",
     "changelog": "...",
-    "binary_sha256": "0403cd4246c29d8e524b9f0cbe9300ea3fb399366996a1a8f8b61efd071b8887",
-    "app_sha256": "0217fc0dbc1acb26c4e7ae9edbd3833a87ff8e530a83655e0d52db4a006fa3f7",
-    "download_url": "https://openfc.dev/firmware/openfc-v1.3.0-merged.bin",
+    "binary_sha256": "12180e38610fb1baa6b9c6a73cbf1b51d5a3c86334c5739ea7d57f5aee21f168",
+    "app_sha256": "d251697643c170b4a503cac45c36ae4ff31262a0061e64af5e397652d48b5fbd",
+    "download_url": "https://openfc.dev/firmware/openfc-v1.4.0-merged.bin",
     "certified_for_competition": true,
-    "min_hw_version": "1.1"
+    "min_hw_version": "1.1",
+    "board": "v1_1"
+  },
+  "latest_v13": {
+    "version": "0.1.6-bringup",
+    "released": "2026-11-10",
+    "description": "...",
+    "changelog": "...",
+    "certified_for_competition": true,
+    "board": "v1_3",
+    "images": {
+      "esp32": {
+        "sha256": "29cabd04fecf3c0c7fc2b77a7327fcf0177efd5db9ea4946405613945210b588",
+        "size": 391360,
+        "download_url": "https://openfc.dev/firmware/openfc-v13-esp32-0.1.6-bringup-merged.bin"
+      },
+      "rp2350": {
+        "sha256": "b985418783e5527a3517700bd0c6036e7c6068415cd4ed1cebaba06422859c84",
+        "size": 52496,
+        "download_url": "https://openfc.dev/firmware/openfc-v13-rp2350-0.1.6-bringup.bin"
+      }
+    }
   }
 }`}</Code>
+        <p>
+          A V1.3 release has one image per MCU instead of a single file. Flash
+          the ESP32-S3 image first, unplug and replug the board, then flash the
+          RP2350 image; see{' '}
+          <a href="/docs/v1_3#flashing" className="text-blue-400 hover:underline">
+            V1.3 flashing
+          </a>
+          .
+        </p>
       </Section>
 
       <Section id="hashes" title="Two hashes, and which one to use">
@@ -128,6 +166,12 @@ export default function ApiDocs() {
           <T>binary_sha256</T>. The lookup table below accepts either and tells
           you which one matched.
         </Note>
+        <p>
+          V1.3 releases publish one <T>sha256</T> per image, the hash of the
+          file as served. The V1.3 firmware does not yet report a{' '}
+          <T>fw_hash</T>, so for V1.3 the API verifies firmware files, not a
+          connected board.
+        </p>
       </Section>
 
       <Section id="verify" title="Verifying a board for competition">
@@ -152,15 +196,27 @@ export default function ApiDocs() {
             and <T>certified_for_competition</T> is <T>true</T>.
           </li>
         </ol>
+        <p>
+          Every entry names its <T>board</T> (<T>v1_1</T> or <T>v1_3</T>). V1.3
+          entries also name the <T>image</T> (<T>esp32</T> or <T>rp2350</T>).
+          An image carried unchanged into a later release resolves to the
+          newest release that contains it.
+        </p>
         <Code label="GET /api/v1/firmware/hashes.json">{`{
   "api_version": "v1",
-  "generated_at": "2026-07-31T01:39:53.093Z",
+  "generated_at": "2026-11-11T19:00:00.000Z",
   "hashes": {
-    "0217fc0dbc1acb26c4e7ae9edbd3833a87ff8e530a83655e0d52db4a006fa3f7": {
-      "version": "1.3.0", "certified_for_competition": true, "kind": "app"
+    "d251697643c170b4a503cac45c36ae4ff31262a0061e64af5e397652d48b5fbd": {
+      "version": "1.4.0", "certified_for_competition": true,
+      "board": "v1_1", "kind": "app"
     },
-    "0403cd4246c29d8e524b9f0cbe9300ea3fb399366996a1a8f8b61efd071b8887": {
-      "version": "1.3.0", "certified_for_competition": true, "kind": "binary"
+    "12180e38610fb1baa6b9c6a73cbf1b51d5a3c86334c5739ea7d57f5aee21f168": {
+      "version": "1.4.0", "certified_for_competition": true,
+      "board": "v1_1", "kind": "binary"
+    },
+    "29cabd04fecf3c0c7fc2b77a7327fcf0177efd5db9ea4946405613945210b588": {
+      "version": "0.1.6-bringup", "certified_for_competition": true,
+      "board": "v1_3", "kind": "binary", "image": "esp32"
     }
   }
 }`}</Code>
@@ -192,9 +248,10 @@ const verdict = await verifyFirmware(fwHash, 'https://openfc.dev');
 
 verdict.certified     // legal for competition
 verdict.recognised    // a published build, certified or not
-verdict.version       // "1.3.0"
-verdict.outdated      // a newer certified release exists
-verdict.latestVersion // "1.3.0"`}</Code>
+verdict.board         // "v1_1" or "v1_3"
+verdict.version       // "1.4.0"
+verdict.outdated      // a newer certified release exists for that board
+verdict.latestVersion // "1.4.0"`}</Code>
         <p>
           <T>verdictFor()</T> is the same logic as a pure function, if you want
           to cache the index and check many boards offline.

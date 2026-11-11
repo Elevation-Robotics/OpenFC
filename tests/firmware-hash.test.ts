@@ -5,7 +5,9 @@ import {
   fetchOfficialFirmware,
   isRunningRelease,
   latestCertifiedRelease,
+  latestV13Release,
   sha256Hex,
+  V13Release,
 } from '@/lib/firmware-hash';
 
 function release(over: Partial<FirmwareManifest['official_releases'][0]>) {
@@ -92,6 +94,39 @@ describe('latestCertifiedRelease', () => {
       official_releases: [release({ certified_for_competition: false })],
     };
     expect(latestCertifiedRelease(manifest)).toBeNull();
+  });
+});
+
+describe('latestV13Release', () => {
+  const image = { download_url: '/firmware/x.bin', sha256: 'aa', size: 1 };
+  const v13 = (version: string, released: string, certified?: boolean): V13Release => ({
+    version,
+    released,
+    description: '',
+    changelog: '',
+    certified_for_competition: certified,
+    esp32: image,
+    rp2350: image,
+  });
+
+  it('offers the newest certified release over a newer uncertified one', () => {
+    const manifest: FirmwareManifest = {
+      official_releases: [],
+      v13_releases: [v13('0.1.6', '2026-11-10', true), v13('0.1.7', '2026-12-01', false)],
+    };
+    expect(latestV13Release(manifest)?.version).toBe('0.1.6');
+  });
+
+  it('falls back to the newest release when none is certified', () => {
+    const manifest: FirmwareManifest = {
+      official_releases: [],
+      v13_releases: [v13('0.1.4', '2026-09-27'), v13('0.1.5', '2026-10-20')],
+    };
+    expect(latestV13Release(manifest)?.version).toBe('0.1.5');
+  });
+
+  it('returns null when there are no V1.3 releases', () => {
+    expect(latestV13Release({ official_releases: [] })).toBeNull();
   });
 });
 

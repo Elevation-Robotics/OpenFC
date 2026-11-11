@@ -7,9 +7,9 @@
       "binary_sha256": "12180e38610fb1baa6b9c6a73cbf1b51d5a3c86334c5739ea7d57f5aee21f168",
       "app_sha256": "d251697643c170b4a503cac45c36ae4ff31262a0061e64af5e397652d48b5fbd",
       "download_url": "/firmware/openfc-v1.4.0-merged.bin",
-      "certified_for_competition": false,
+      "certified_for_competition": true,
       "min_hw_version": "1.1",
-      "changelog": "Protocol revision 3, for hosts that reattach mid-match. start_period takes a match_id/period_seq token: replaying the running period's token is a no-op instead of a restart, a different token is refused while a period runs, and a retired token comes back as period_complete rather than re-enabling the robots after the match. Retirement is per match and covers every period_seq at or below the highest one completed, so finishing a driver period also closes the auto period before it. Adds resync (moves the deadline; shortening is unrestricted, extension capped at 2000 ms), end_period (ends a period without an e-stop), and device_id binding, which becomes mandatory once a host uses it so a misrouted command cannot enable another field. Tokens are echoed in state, timer_state and timer_expired so reconnect reconciles in one round trip. E-stop is never gated on any of this. NOT YET CERTIFIED: awaiting hardware verification."
+      "changelog": "Protocol revision 3, for hosts that reattach mid-match. start_period takes a match_id/period_seq token: replaying the running period's token is a no-op instead of a restart, a different token is refused while a period runs, and a retired token comes back as period_complete rather than re-enabling the robots after the match. Retirement is per match and covers every period_seq at or below the highest one completed, so finishing a driver period also closes the auto period before it. Adds resync (moves the deadline; shortening is unrestricted, extension capped at 2000 ms), end_period (ends a period without an e-stop), and device_id binding, which becomes mandatory once a host uses it so a misrouted command cannot enable another field. Tokens are echoed in state, timer_state and timer_expired so reconnect reconciles in one round trip. E-stop is never gated on any of this. Certified for competition 2026-11-11."
     },
     {
       "version": "1.3.0",
@@ -39,6 +39,7 @@
       "version": "0.1.6-bringup",
       "released": "2026-11-10",
       "description": "Keeps the match period running when the host drops, and rides through a Competition Control reconnect",
+      "certified_for_competition": true,
       "changelog": "Release build (no bus capture or relay). Driver and auton now start a timed period on the board. If the host goes away mid-period the robots keep their state, instead of dropping to Disabled after 2.5 s, and the board ends the period on its own timer, disabling every port including the legacy ports (bu_match_end, reason timer). bu_field reports timed and remaining_ms for a host that reconnects. Competition Control's reconnect, which disables before it looks at its match, no longer blips the robots: while a period runs, the first disable and legacy-off within 1 s of get_info are answered but held, and a second disable (the match was stopped) applies at once. field_period sent mid-period applies to the next period. Only the ESP32 image changed; the RP2350 image is the same as 0.1.5. Bench-tested with a robot on a legacy port through a host outage and a simulated Competition Control reconnect; not yet tested with the Competition Control app or with controllers on the Smart ports.",
       "esp32": {
         "download_url": "/firmware/openfc-v13-esp32-0.1.6-bringup-merged.bin",
@@ -55,6 +56,7 @@
       "version": "0.1.5-bringup",
       "released": "2026-10-20",
       "description": "Fixes Smart ports C/D staying disabled after a state change",
+      "certified_for_competition": false,
       "changelog": "Release build (no bus capture or relay). A field-state change the RP2350 missed on the SPI link went unnoticed: the ESP32 read back the previous OK result, so ports C/D stayed in the old state, usually Disabled, until the next change. Each field set now carries a sequence number that the RP2350 reports back in its status, and the ESP32 re-sends the state when they differ, so a missed change is corrected within 200 ms. After the RP2350's link watchdog disables the field, the state is restored once the link is back. Flash both MCUs from this release. NOT YET BENCH-TESTED: built from the fix, awaiting a C/D state walk on hardware.",
       "esp32": {
         "download_url": "/firmware/openfc-v13-esp32-0.1.5-bringup-merged.bin",
@@ -71,6 +73,7 @@
       "version": "0.1.4-bringup",
       "released": "2026-09-27",
       "description": "Smart-port field control rebuilt from a real field controller; board-driven status LEDs",
+      "certified_for_competition": false,
       "changelog": "Release build (no bus capture or relay). The Smart-port engines on both MCUs now answer the controller exactly as a VEX field controller does, so controllers reach field mode and show Disabled/Driver/Auton with no robot linked; the state frame is re-sent until the controller echoes it. Both MCUs boot engaged and Disabled and the RP2350 is released at boot, so a controller on any Smart port shows Disabled with no host. The board paints the status LEDs (red disabled, amber auton, green driver) and reports robot names on all four ports. Fixes: SPI timeouts and non-blocking RP2350 recovery keep ports A/B responsive, RP2350 flashing works while engaged, and a flash chunk that arrives short is rejected. Works with the practice match page, which drives the Smart ports and the legacy ports together.",
       "esp32": {
         "download_url": "/firmware/openfc-v13-esp32-0.1.4-bringup-merged.bin",
@@ -87,6 +90,7 @@
       "version": "0.1.0-bringup",
       "released": "2026-09-08",
       "description": "V1.3 dual-MCU bring-up firmware: ESP32-S3 host plus RP2350 Smart-port expander",
+      "certified_for_competition": false,
       "changelog": "Diagnostic firmware for the Open_FC_V1_3 REV A prototype, not the certified match protocol. ESP32-S3: bu_* JSON-lines protocol, legacy ports, RS-485 Smart ports A/B, field-control engine, RP2350 RUN/BOOT_CTRL control, SPI master (mode 1) to the RP2350, and SWD flashing of the RP2350 (rp2350_swd_probe / rp2350_flash_begin / rp2350_flash_data / rp2350_flash_end). RP2350: SPI slave (PL022, mode 1, 37-byte frames, poll-based results) driving Smart ports C/D with the same handshake engine; verified holding live sessions with two VEX controllers in parallel.",
       "esp32": {
         "download_url": "/firmware/openfc-v13-esp32-0.1.0-bringup-merged.bin",

@@ -1,6 +1,6 @@
 # OpenFC V1.3 bring-up firmware
 
-Firmware for the **Open_FC_V1_3 REV A** prototype: an ESP32-S3 that talks to the PC and runs the legacy ports and Smart ports A/B, and an RP2350 that runs Smart ports C/D. It speaks the `bu_*` bring-up protocol, not the certified match protocol, and is kept apart from [`../firmware/`](../firmware/) so neither build can pick up the other.
+Firmware for the **Open_FC_V1_3 REV A** board: an ESP32-S3 that talks to the PC and runs the legacy ports and Smart ports A/B, and an RP2350 that runs Smart ports C/D. The board is in competition use on 0.1.6. It speaks the `bu_*` protocol, not the V1.1 board's match protocol, and is kept apart from [`../firmware/`](../firmware/) so neither build can pick up the other. The "bring-up" name dates from its development.
 
 The user-facing reference (ports, commands, the Smart-port protocol, flashing, troubleshooting) is the site's V1.3 docs page, [`app/docs/v1_3/page.tsx`](../app/docs/v1_3/page.tsx), served at `/docs/v1_3`. The board's design files (gerbers, BOM, pick and place, renders) are in [`public/hardware/`](../public/hardware/) as `openfc-v1_3-*` and listed at `/docs/hardware#v1_3-files`. This README covers working on the firmware.
 
@@ -63,7 +63,7 @@ py bringup_cli.py --port COM3 cmd '{"cmd":"rp2350_spi","op":"ping"}'
 
 The CLI and the web flasher check that every 384-byte chunk arrives whole and that the final byte count matches the image. A short image leaves the RP2350 in its bootrom (SWD answers, SPI doesn't).
 
-**Publishing** to the web flasher: `py tools/publish_firmware.py` builds the `release` env of both projects, writes the merged ESP32 image and the RP2350 image into `public/firmware/`, and prints the `v13_releases` entry to add to `public/firmware/manifest.json`. The flasher offers the entry with the newest `released` date. Check the published hello says `"devtools":false`.
+**Publishing** to the web flasher: `py tools/publish_firmware.py` builds the `release` env of both projects, writes the merged ESP32 image and the RP2350 image into `public/firmware/`, and prints the `v13_releases` entry to add to `public/firmware/manifest.json`, with `certified_for_competition: false`. The flasher offers the newest certified entry, falling back to the newest entry when none is certified. Set the flag to `true` once the release is verified for competition, which also marks it certified in the firmware API. Check the published hello says `"devtools":false`.
 
 ## How the Smart-port engine works
 

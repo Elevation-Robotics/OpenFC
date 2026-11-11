@@ -29,10 +29,9 @@ export default function BringupV13Page() {
         <div>
           <h1 className="text-2xl font-bold">Open FC V1_3 bring-up</h1>
           <p className="mt-1 text-sm text-gray-400">
-            Diagnostic firmware for the new dual-MCU prototype. Not the
-            production protocol — see the panels below for what each
-            subsystem needs to pass before trusting it. Flash both MCUs from
-            the{' '}
+            Diagnostic console for the V1.3 board: exercise each subsystem
+            directly over the board&apos;s <code>bu_*</code> protocol. For
+            matches, use the practice match page. Flash both MCUs from the{' '}
             <Link href="/flash/v1_3" className="text-blue-400 hover:underline">
               V1.3 flasher
             </Link>

@@ -195,7 +195,7 @@ export default function FlashV13Page() {
           <p className="mt-1 text-sm text-gray-400">
             Dual-MCU board: the ESP32-S3 is flashed over USB, the board is
             unplugged and plugged back in, then the ESP32-S3 flashes the RP2350
-            for you. Prototype firmware — not certified for competition.{' '}
+            for you.{' '}
             <Link href="/docs/v1_3" className="text-blue-400 hover:underline">
               Read the procedure
             </Link>
@@ -214,9 +214,14 @@ export default function FlashV13Page() {
       )}
       {release && (
         <div className="mb-6 rounded-lg border border-gray-800 bg-gray-900/30 px-4 py-3 text-sm">
-          <p className="text-gray-200">
+          <p className="flex flex-wrap items-center gap-x-2 text-gray-200">
             <span className="font-semibold">v{release.version}</span>
-            <span className="text-gray-500"> · released {release.released}</span>
+            <span className="text-gray-500">· released {release.released}</span>
+            {release.certified_for_competition && (
+              <span className="rounded bg-green-900/50 px-2 py-0.5 text-xs font-semibold text-green-300">
+                Certified for competition
+              </span>
+            )}
           </p>
           <p className="mt-1 text-gray-400">{release.description}.</p>
           <details className="mt-2">

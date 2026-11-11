@@ -11,6 +11,10 @@
 export const API_VERSION = 'v1';
 export const API_BASE = `/api/${API_VERSION}`;
 
+/** Board revision a release or hash belongs to. */
+export type Board = 'v1_1' | 'v1_3';
+
+/** A V1.1 release. */
 export interface ApiRelease {
   version: string;
   released: string;
@@ -27,19 +31,45 @@ export interface ApiRelease {
   download_url: string;
   certified_for_competition: boolean;
   min_hw_version: string;
+  board: 'v1_1';
+}
+
+/** One MCU's image within a V1.3 release. */
+export interface ApiV13Image {
+  /** SHA-256 of the file as served. */
+  sha256: string;
+  size: number;
+  download_url: string;
+}
+
+/** A V1.3 release: one image per MCU, flashed ESP32-S3 first. */
+export interface ApiV13Release {
+  version: string;
+  released: string;
+  description: string;
+  changelog: string;
+  certified_for_competition: boolean;
+  board: 'v1_3';
+  images: { esp32: ApiV13Image; rp2350: ApiV13Image };
 }
 
 export interface ApiLatest {
   api_version: string;
   generated_at: string;
+  /** Newest certified V1.1 release. */
   latest: ApiRelease | null;
+  /** Newest certified V1.3 release. Absent from indexes generated before V1.3 was added. */
+  latest_v13?: ApiV13Release | null;
 }
 
 export interface ApiReleaseList {
   api_version: string;
   generated_at: string;
+  /** Number of V1.1 releases. */
   count: number;
   releases: ApiRelease[];
+  v13_count?: number;
+  v13_releases?: ApiV13Release[];
 }
 
 /** Which hash matched: what a board reports vs. what a file hashes to. */
@@ -49,6 +79,10 @@ export interface ApiHashEntry {
   version: string;
   certified_for_competition: boolean;
   kind: HashKind;
+  /** Absent from indexes generated before V1.3 was added; those are all V1.1. */
+  board?: Board;
+  /** V1.3 only: which MCU's image this is. */
+  image?: 'esp32' | 'rp2350';
 }
 
 export interface ApiHashIndex {
@@ -71,9 +105,18 @@ export interface FirmwareVerdict {
   recognised: boolean;
   version: string | null;
   kind: HashKind | null;
-  /** True when a newer certified release exists than the one running. */
+  /** Board the matched release is for; null when nothing matched. */
+  board: Board | null;
+  /** True when a newer certified release exists for the same board. */
   outdated: boolean;
+  /** Newest certified version for the matched board (V1.1 when nothing matched). */
   latestVersion: string | null;
+}
+
+/** Newest certified version per board, as passed to `verdictFor`. */
+export interface LatestVersions {
+  v1_1?: string | null;
+  v1_3?: string | null;
 }
 
 async function getJson<T>(url: string, baseUrl: string): Promise<T> {
@@ -98,32 +141,40 @@ export function fetchHashIndex(baseUrl = ''): Promise<ApiHashIndex> {
 }
 
 /**
- * Decide whether a board-reported `fw_hash` is a certified official build.
+ * Decide whether a board-reported `fw_hash` or a file's SHA-256 is a certified
+ * official build. `latest` is the newest certified V1.1 version, or the newest
+ * per board; "outdated" is judged against the matched release's own board.
  * Pure, so it can be unit-tested and reused offline against a cached index.
  */
 export function verdictFor(
   fwHash: string | null | undefined,
   index: ApiHashIndex,
-  latestVersion: string | null = null,
+  latest: string | null | LatestVersions = null,
 ): FirmwareVerdict {
+  const latestBy: LatestVersions =
+    latest !== null && typeof latest === 'object' ? latest : { v1_1: latest };
   const base: FirmwareVerdict = {
     certified: false,
     recognised: false,
     version: null,
     kind: null,
+    board: null,
     outdated: false,
-    latestVersion,
+    latestVersion: latestBy.v1_1 ?? null,
   };
   if (!fwHash) return base;
 
   const entry = index.hashes[fwHash.trim().toLowerCase()];
   if (!entry) return base;
 
+  const board: Board = entry.board ?? 'v1_1';
+  const latestVersion = latestBy[board] ?? null;
   return {
     certified: entry.certified_for_competition,
     recognised: true,
     version: entry.version,
     kind: entry.kind,
+    board,
     outdated: latestVersion !== null && entry.version !== latestVersion,
     latestVersion,
   };
@@ -142,5 +193,8 @@ export async function verifyFirmware(
     fetchHashIndex(baseUrl),
     fetchLatestFirmware(baseUrl),
   ]);
-  return verdictFor(fwHash, index, latest.latest?.version ?? null);
+  return verdictFor(fwHash, index, {
+    v1_1: latest.latest?.version ?? null,
+    v1_3: latest.latest_v13?.version ?? null,
+  });
 }
