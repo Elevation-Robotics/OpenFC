@@ -9,6 +9,7 @@ import {
   PERIOD_MIN_S,
 } from '@/lib/match-engine';
 import { OpenFCEvent } from '@/lib/openfc-protocol';
+import { v13Board } from '@/lib/match-board';
 
 const FAKE = [
   'setTimeout',
@@ -392,5 +393,105 @@ describe('presets', () => {
       );
       engine.destroy();
     }
+  });
+});
+
+describe('V1.3 board', () => {
+  function makeV13(over: Partial<MatchConfig> = {}) {
+    const sent: string[] = [];
+    const push = (line: string) => sent.push(line);
+    const engine = new MatchEngine(config(over), push, v13Board(push));
+    const parsed = () => sent.map((s) => JSON.parse(s) as Record<string, unknown>);
+    const last = (name: string) => parsed().filter((c) => c.cmd === name).at(-1);
+    return { engine, sent, parsed, last };
+  }
+  const bu = (evt: Record<string, unknown>) => evt as unknown as OpenFCEvent;
+
+  it('drives the Smart ports and the legacy ports together', () => {
+    const { engine, parsed, sent } = makeV13();
+    engine.start();
+    const cmds = parsed();
+    expect(cmds).toContainEqual({ cmd: 'field_period', driver: 15000, auton: 15000 });
+    expect(cmds).toContainEqual({ cmd: 'field_state', state: 'auton' });
+    expect(cmds).toContainEqual({ cmd: 'legacy_set', enable: true, mode: 'auto' });
+    // field_period goes first so the controllers count down the right period.
+    const i = sent.findIndex((s) => s.includes('field_period'));
+    const j = sent.findIndex((s) => s.includes('field_state'));
+    expect(i).toBeLessThan(j);
+    expect(sent.some((s) => s.includes('start_period') || s.includes('estop'))).toBe(false);
+    engine.destroy();
+  });
+
+  it('ends the period itself when the countdown reaches zero', () => {
+    const { engine, last } = makeV13({ sequence: 'auto', autoDurationMs: 1000 });
+    engine.start();
+    vi.advanceTimersByTime(1100);
+    expect(engine.getState().phase).toBe('done');
+    expect(last('field_state')).toEqual({ cmd: 'field_state', state: 'disabled' });
+    expect(last('legacy_set')).toEqual({ cmd: 'legacy_set', enable: false, mode: 'driver' });
+    engine.destroy();
+  });
+
+  it('runs auto then driver with a timed gap', () => {
+    const { engine, last } = makeV13({ autoDurationMs: 1000, gapDurationMs: 500 });
+    engine.start();
+    vi.advanceTimersByTime(1100);
+    expect(engine.getState().phase).toBe('gap');
+    expect(last('field_state')).toEqual({ cmd: 'field_state', state: 'disabled' });
+    vi.advanceTimersByTime(600);
+    expect(engine.getState().phase).toBe('driver');
+    expect(last('field_state')).toEqual({ cmd: 'field_state', state: 'driver' });
+    expect(last('legacy_set')).toEqual({ cmd: 'legacy_set', enable: true, mode: 'driver' });
+    engine.destroy();
+  });
+
+  it('treats bu_match_end as the period ending', () => {
+    const { engine, last } = makeV13({ sequence: 'driver' });
+    engine.start();
+    engine.handleEvent(bu({ evt: 'bu_match_end' }));
+    expect(engine.getState().phase).toBe('done');
+    expect(last('legacy_set')).toEqual({ cmd: 'legacy_set', enable: false, mode: 'driver' });
+    engine.destroy();
+  });
+
+  it('errors on the field watchdog and takes the legacy ports down', () => {
+    const { engine, last } = makeV13();
+    engine.start();
+    engine.handleEvent(bu({ evt: 'bu_field_watchdog' }));
+    expect(engine.getState().phase).toBe('error');
+    expect(last('legacy_set')).toEqual({ cmd: 'legacy_set', enable: false, mode: 'driver' });
+    engine.destroy();
+  });
+
+  it('disables everything on STOP', () => {
+    const { engine, last } = makeV13();
+    engine.start();
+    engine.stop();
+    expect(engine.getState().phase).toBe('stopped');
+    expect(last('field_state')).toEqual({ cmd: 'field_state', state: 'disabled' });
+    expect(last('legacy_set')).toEqual({ cmd: 'legacy_set', enable: false, mode: 'driver' });
+    engine.destroy();
+  });
+
+  it('re-engages a disengaged board and re-sends the state', () => {
+    const { engine, parsed } = makeV13();
+    engine.start();
+    engine.handleEvent(bu({ evt: 'bu_error', reason: 'not_engaged', cmd: 'field_state' }));
+    const cmds = parsed();
+    const k = cmds.findIndex((c) => c.cmd === 'field_engage');
+    expect(cmds[k]).toEqual({ cmd: 'field_engage', on: true, interlock: false });
+    expect(cmds[k + 1]).toEqual({ cmd: 'field_state', state: 'auton' });
+    engine.destroy();
+  });
+
+  it('pings with the bring-up ping and never re-arms on reconnect', () => {
+    const { engine, sent } = makeV13();
+    engine.start();
+    vi.advanceTimersByTime(600);
+    expect(sent.filter((s) => s.includes('"ping"')).length).toBeGreaterThan(0);
+    const before = sent.length;
+    engine.resyncTimer(false, 0);
+    expect(sent.length).toBe(before);
+    engine.destroy();
   });
 });

@@ -20,6 +20,8 @@ the CH340 UART), including the ESP32->RP2350 SWD flash path.
   py bringup_cli.py --port COM3 flash-rp2350 ..\\rp2350\\.pio\\build\\rpipico2\\firmware.bin
   py bringup_cli.py --port COM3 listen C [--secs 3]
   py bringup_cli.py --port COM3 engage --state driver --secs 30
+
+Bus capture, the relay and the analysis tools live in ../devtools/.
 """
 import argparse, base64, json, sys, time
 import serial
@@ -104,6 +106,9 @@ def cmd_flash(s, path):
         ev = wait_for(s, lambda e: e.get("evt") == "bu_flash_status" and e.get("stage") == "data", 10)
         if not ev or not ev.get("ok"):
             sys.exit(f"flash_data failed at {off}: {ev}")
+        want = min(off + CHUNK, len(data))
+        if ev.get("received") != want:
+            sys.exit(f"flash_data lost bytes at {off}: board has {ev.get('received')}, expected {want}")
         if (off // CHUNK) % 20 == 0:
             print(f"  {ev.get('received')}/{len(data)}")
     send(s, {"cmd": "rp2350_flash_end"})
@@ -111,10 +116,12 @@ def cmd_flash(s, path):
     print("end:", ev, f"({time.time() - t0:.1f}s)")
     if not ev or not ev.get("ok"):
         sys.exit("flash_end failed")
+    if ev.get("received") != len(data):
+        sys.exit(f"length mismatch: board received {ev.get('received')} of {len(data)} bytes")
 
 
-def cmd_engage(s, state, secs):
-    send(s, {"cmd": "field_engage", "on": True})
+def cmd_engage(s, state, secs, interlock=False):
+    send(s, {"cmd": "field_engage", "on": True, "interlock": interlock})
     send(s, {"cmd": "field_state", "state": state})
     end = time.time() + secs
     try:
@@ -125,6 +132,7 @@ def cmd_engage(s, state, secs):
                     ports = {p["port"]: p for p in ev.get("ports", [])}
                     print(f"  t={secs - (end - time.time()):5.1f}s rp2350={ev.get('rp2350')} "
                           + " ".join(f"{k}:link={v.get('link')},fm={v.get('fm')},pack={v.get('pack')}"
+                                     + (f",robot={v['robot']}" if v.get("robot") else "")
                                      for k, v in ports.items()))
                 elif ev.get("evt") not in ("bu_state", "ack"):
                     print(" ", json.dumps(ev))
@@ -142,6 +150,7 @@ def main():
     sub.add_parser("flash-rp2350").add_argument("bin")
     p = sub.add_parser("listen"); p.add_argument("port_name"); p.add_argument("--secs", type=float, default=3)
     p = sub.add_parser("engage"); p.add_argument("--state", default="disabled"); p.add_argument("--secs", type=float, default=30)
+    p.add_argument("--interlock", action="store_true", help="hold driver/auton until the controller is in A7 field mode")
     a = ap.parse_args()
 
     s = open_port(a.port)
@@ -162,7 +171,7 @@ def main():
                       " ".join("%02X" % b for b in ev.get("bytes", []))))
             time.sleep(0.5)
     elif a.op == "engage":
-        cmd_engage(s, a.state, a.secs)
+        cmd_engage(s, a.state, a.secs, a.interlock)
     s.close()
 
 

@@ -16,10 +16,12 @@
 
 The V1_3 board carries two MCUs and the site flashes them in two steps
 (app/flash/v1_3): the ESP32-S3 with esptool-js from a merged image at 0x0,
-then the RP2350 through the ESP32's SWD bridge from a raw flash image. Run
-after `pio run` in both ../esp32 and ../rp2350:
+then the RP2350 through the ESP32's SWD bridge from a raw flash image.
 
     py tools/publish_firmware.py
+
+Builds the `release` env of both projects (OPENFC_DEVTOOLS=0: no bus
+capture or relay) and publishes those, never the bench builds.
 
 Writes public/firmware/openfc-v13-esp32-<ver>-merged.bin and
 public/firmware/openfc-v13-rp2350-<ver>.bin and prints the `v13_releases`
@@ -36,8 +38,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ESP32_DIR = ROOT / "esp32"
-ESP32_BUILD = ESP32_DIR / ".pio" / "build" / "esp32-s3-devkitc-1"
-RP2350_BIN = ROOT / "rp2350" / ".pio" / "build" / "rpipico2" / "firmware.bin"
+RP2350_DIR = ROOT / "rp2350"
+ESP32_BUILD = ESP32_DIR / ".pio" / "build" / "release"
+RP2350_BIN = RP2350_DIR / ".pio" / "build" / "release" / "firmware.bin"
 OUT_DIR = ROOT.parent / "public" / "firmware"
 ESPTOOL = Path(os.path.expanduser("~")) / ".platformio" / "packages" / "tool-esptoolpy" / "esptool.py"
 
@@ -62,12 +65,19 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def build_release() -> None:
+    for d in (ESP32_DIR, RP2350_DIR):
+        subprocess.run([sys.executable, "-m", "platformio", "run", "-e", "release"],
+                       cwd=d, check=True)
+
+
 def main() -> None:
+    build_release()
     for _, p in PARTS:
         if not p.exists():
-            sys.exit(f"missing {p} - run `pio run` in esp32/ first")
+            sys.exit(f"missing {p} after the release build")
     if not RP2350_BIN.exists():
-        sys.exit(f"missing {RP2350_BIN} - run `pio run` in rp2350/ first")
+        sys.exit(f"missing {RP2350_BIN} after the release build")
     if not ESPTOOL.exists():
         sys.exit(f"missing {ESPTOOL} - run `pio run` to install the toolchain")
 

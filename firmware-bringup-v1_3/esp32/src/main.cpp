@@ -36,15 +36,19 @@
 //   rp2350_flash_begin {size}                   -> bu_flash_status
 //   rp2350_flash_data  {b64}                    -> bu_flash_status
 //   rp2350_flash_end                            -> bu_flash_status
-//   field_engage {on}                           -> bu_field
+//   field_engage {on, interlock}                -> bu_field
 //   field_state  {state:"disabled"|"driver"|"auton"} -> bu_field
 //   field_period {driver,auton}  (ms)           -> bu_field
+//   capture      {ports:["A","B","C","D"], on, stream} -> bu_cap_status
+//   capture      {dump:true}                    -> bu_cap per record, then bu_cap_status done
+//   relay        {ms, hold_us}                  -> bu_relay_result (blocks for ms; then dump)
 //   led_set      {index,r,g,b}                  -> ack
 //   identify                                    -> ack (then animates)
 //
 // Events (board -> host, {"evt":...}): bu_hello, bu_state (1 Hz heartbeat),
 // bu_legacy_state, bu_rs485_rx, bu_linktest_result, bu_rp2350_state,
-// bu_spi_result, ack, bu_error.
+// bu_spi_result, bu_cap, bu_cap_status, bu_rp2350_reset, bu_relay_result,
+// ack, bu_error.
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -55,6 +59,8 @@
 #include "openfc_pins_v13.h"
 #include "openfc_frames.h"
 #include "openfc_spi_link.h"
+#include "openfc_capture.h"
+#include "devtools.h"
 #include "smart_link.h"
 #include "swd_rp2350.h"
 
@@ -82,10 +88,13 @@ static bool legacyEnable = false;
 static String legacyMode = "driver";
 static bool legacyDiag = false;
 
-static bool rp2350Run = false;        // held in reset until the host asks
+static bool rp2350Run = false;        // released at the end of setup()
 static bool rp2350BootCtrl = false;
 
 static Adafruit_NeoPixel pixels(NEOPIXEL_COUNT, PIN_WS2812_DATA, NEO_GRBW + NEO_KHZ800);
+
+enum class StatusShown { Unknown, Disabled, Auton, Driver };
+static StatusShown ledsShown = StatusShown::Unknown;
 
 static HardwareSerial BusA(1);
 static HardwareSerial BusB(2);
@@ -96,8 +105,43 @@ static HardwareSerial BusB(2);
 openfc_state_t g_field_state = STATE_DISABLED;
 uint32_t g_driver_period_ms = 105000;   // standard VRC 1:45 driver
 uint32_t g_auton_period_ms = 15000;     // 15 s auton
+bool g_field_interlock = false;
 static bool fieldEngaged = false;
 static uint32_t lastHostPingMs = 0;
+
+// Board-side period timer. field_state driver/auton starts it with that
+// mode's field_period length. While it runs the host watchdog is suspended,
+// so a host that drops mid-match leaves every port in its state until the
+// period ends here, as on the production firmware's timed periods. The end
+// disables every port, legacy included, and reports bu_match_end; a host
+// that reconnects reads the period back from bu_field (timed, remaining_ms).
+static bool periodActive = false;
+static uint32_t periodStartMs = 0;
+static uint32_t periodLengthMs = 0;
+// field_period sets the lengths the next period uses (and bu_field echoes
+// them). A running period keeps the ones it started with, because the A/B
+// engines and the RP2350 count down from g_*_period_ms: a host re-sending
+// its lengths mid-period must not cut the period short.
+static uint32_t hostDriverMs = 105000;
+static uint32_t hostAutonMs = 15000;
+
+// Reconnect preamble. On every (re)connect, Competition Control's V1.3
+// driver sends get_info, then field_state disabled (and waits for a
+// bu_field saying "disabled"), field_period and legacy_set off, before it
+// compares the board with its match. Applied mid-period, that disable would
+// blip every robot. So while a period runs, the first field_state disabled
+// and the first legacy_set off within RECONNECT_PREAMBLE_MS of a get_info
+// are answered but not applied: the reply says "disabled" with held:true,
+// and the next bu_field reports the real state. A host whose match is over
+// then sends a second disable, which applies at once.
+static const uint32_t RECONNECT_PREAMBLE_MS = 1000;
+static uint32_t preambleUntilMs = 0;
+static bool holdNextDisable = false;
+static bool holdNextLegacyOff = false;
+
+static bool inReconnectPreamble(uint32_t now) {
+    return periodActive && (int32_t)(preambleUntilMs - now) > 0;
+}
 
 // ─── Ports C/D status, proxied from the RP2350 over SPI ───
 // The session engines for C/D run ON the RP2350 (smart_link_rp.*, identical
@@ -111,11 +155,27 @@ struct Rp2350PortStatus {
     uint16_t pollAckCount = 0;
     uint8_t linkAckCount = 0;
     uint8_t swreplugCount = 0;
+    char robotName[7] = {0};
     bool haveStatus = false;   // false until the first successful poll
 };
 static Rp2350PortStatus portC, portD;
 static uint32_t lastRp2350PollMs = 0;
 static bool rp2350Reachable = false;
+// Consecutive failed requests; three in a row pulses RUN (rp2350Recover).
+static uint8_t  rp2350Fails = 0;
+static uint32_t rp2350Resets = 0;
+static uint32_t rp2350LastResetMs = 0;
+// True between rp2350_flash_begin and the end (or failure) of the session:
+// the RP2350 is halted, so SPI polling and auto-recovery must stay off.
+static bool rp2350Flashing = false;
+// After a reset pulse: no SPI until the RP2350 has booted, then re-send the
+// field state once it answers. Recovery backs off while it keeps failing.
+static uint32_t rp2350HoldoffUntilMs = 0;
+static bool rp2350NeedFieldSet = false;
+static uint32_t rp2350RetryMs = 5000;
+// Seq of the last FIELD_SET sent (1..255). The RP2350 echoes the last one it
+// applied in FIELD_STATUS; a mismatch means it missed one, so re-send.
+static uint8_t rp2350FieldSeq = 0;
 // Chrome throttles background tabs to >=1 s timers; 2500 ms tolerates that
 // (same rationale as the proven firmware's watchdog).
 static const uint32_t FIELD_WATCHDOG_MS = 2500;
@@ -156,11 +216,12 @@ static size_t b64Decode(const char* in, uint8_t* out, size_t outCap) {
 static void handleCommand(const JsonDocument& doc);
 static void emitHello();
 static void emitError(const char* reason, const char* cmd);
-static void emitFieldState();
+static void emitFieldState(const char* heldState = nullptr);
 static void emitLegacyState();
 static void emitRp2350State();
 static void emitHeartbeat();
 static void doLegacySet(bool enable, const String& mode);
+static void endPeriod(const char* reason);
 static void doLegacyRaw(bool ed, bool ad);
 static void doRs485Raw(const JsonDocument& doc);
 static void doRs485Listen(const JsonDocument& doc);
@@ -171,7 +232,11 @@ static void doRp2350Ctrl(const JsonDocument& doc);
 static void doRp2350Spi(const JsonDocument& doc);
 static void sendFieldSetToRp2350();
 static void pollRp2350FieldStatus();
+static void rp2350Recover();
 static void doLedSet(const JsonDocument& doc);
+static StatusShown statusFor(bool engaged, openfc_state_t field, int edLevel, int adLevel);
+static StatusShown currentStatus();
+static void showStatus(StatusShown s);
 static HardwareSerial* busForPort(char port, int* dePin);
 static void spiTransact(const uint8_t out[SPI_LINK_FRAME_LEN],
                         uint8_t in[SPI_LINK_FRAME_LEN]);
@@ -206,8 +271,7 @@ void setup() {
     pinMode(PIN_BTN2, INPUT_PULLUP);
 
     pixels.begin();
-    pixels.clear();
-    pixels.show();
+    showStatus(currentStatus());
 
     BusA.begin(1600000, SERIAL_8N1, PIN_RS485A_RX, PIN_RS485A_TX);
     BusB.begin(1600000, SERIAL_8N1, PIN_RS485B_RX, PIN_RS485B_TX);
@@ -228,16 +292,36 @@ void setup() {
 
     linkA.begin(&BusA, UART_NUM_1, PIN_RS485A_DE, 'A');
     linkB.begin(&BusB, UART_NUM_2, PIN_RS485B_DE, 'B');
+#if OPENFC_DEVTOOLS
+    devtoolsBegin();
+    linkA.capSink = linkB.capSink = devtoolsCapSink;
+#endif
 
+    Serial.setTxBufferSize(2048);   // must precede begin(); keeps long events from stalling the engines
+    Serial.setRxBufferSize(2048);   // a 550-byte rp2350_flash_data line must fit while the engines run
     Serial.begin(115200);
     Serial.setTimeout(50);
     delay(150);  // UART0 (CH340C): allow the bridge/host to settle
 
     digitalWrite(PIN_ESP_READY, HIGH);
 
+    // Boot engaged and Disabled, so a controller plugged into an idle board
+    // links and shows Disabled without a host. field_engage {on:false} hands
+    // the ports back for raw diagnostics or the relay.
+    digitalWrite(PIN_RP2350_RUN, HIGH);
+    rp2350Run = true;
+    delay(300);   // RP2350 boot, before the first SPI exchange
+    fieldEngaged = true;
+    g_field_state = STATE_DISABLED;
+    linkA.reset(millis());
+    linkB.reset(millis());
+    lastHostPingMs = millis();
+    sendFieldSetToRp2350();
+
     emitHello();
     emitLegacyState();
     emitRp2350State();
+    emitFieldState();
 }
 
 // ─── Loop ───
@@ -264,8 +348,7 @@ void loop() {
 
     if (identifying && now >= identifyEndMs) {
         identifying = false;
-        pixels.clear();
-        pixels.show();
+        ledsShown = StatusShown::Unknown;
     } else if (identifying) {
         uint32_t phase = (now / 200) % 3;
         pixels.clear();
@@ -275,12 +358,20 @@ void loop() {
         for (int i = 0; i < NEOPIXEL_COUNT; i++) pixels.setPixelColor(i, color);
         pixels.show();
     }
+    showStatus(currentStatus());
+#if OPENFC_DEVTOOLS
+    devtoolsService();
+#endif
 
     if (fieldEngaged) {
-        // Host watchdog: drop to disabled if pings stop while enabled.
-        if (g_field_state != STATE_DISABLED &&
+        if (periodActive && now - periodStartMs >= periodLengthMs) endPeriod("timer");
+
+        // Host watchdog: drop to disabled if pings stop while enabled
+        // outside a timed period. A running period ends on its own timer.
+        if (g_field_state != STATE_DISABLED && !periodActive &&
             (now - lastHostPingMs >= FIELD_WATCHDOG_MS)) {
             g_field_state = STATE_DISABLED;
+            showStatus(currentStatus());
             sendFieldSetToRp2350();  // C/D must disable too
             JsonDocument d; d["evt"] = "bu_field_watchdog";
             serializeJson(d, Serial); Serial.println();
@@ -293,7 +384,8 @@ void loop() {
         // Poll C/D status at ~5 Hz — plenty for the UI; the RP2350's own
         // 50 Hz A7 tick runs independently of this link (see main.cpp
         // there), so this cadence doesn't affect the controller session.
-        if (now - lastRp2350PollMs >= 200) {
+        if (!rp2350Flashing && (int32_t)(now - rp2350HoldoffUntilMs) >= 0 &&
+            now - lastRp2350PollMs >= (rp2350Reachable ? 200u : 2000u)) {
             lastRp2350PollMs = now;
             pollRp2350FieldStatus();
         }
@@ -302,18 +394,12 @@ void loop() {
         // KNOWN GAP: the RP2350 also auto-disables ITS copy of g_field_state
         // locally if C/D's countdown expires first, but does not report
         // that back over FIELD_STATUS — so on a C/D-triggered match end,
-        // A/B keeps streaming the old enabled state until the operator (or
-        // this watchdog) notices. Fine for today's link/session bring-up;
-        // flagging for whoever wires match-end symmetry properly.
+        // A/B keeps streaming the old enabled state until the period timer
+        // above ends it (C/D start counting after it, so that is moments
+        // later). Flagging for whoever wires match-end symmetry properly.
         if (linkA.matchEndPending || linkB.matchEndPending) {
             linkA.matchEndPending = linkB.matchEndPending = false;
-            if (g_field_state != STATE_DISABLED) {
-                g_field_state = STATE_DISABLED;
-                sendFieldSetToRp2350();
-                JsonDocument d; d["evt"] = "bu_match_end";
-                serializeJson(d, Serial); Serial.println();
-                emitFieldState();
-            }
+            if (g_field_state != STATE_DISABLED) endPeriod("port");
         }
         for (SmartLink* l : {&linkA, &linkB}) {
             if (l->swreplugPending) {
@@ -331,6 +417,26 @@ void loop() {
         emitHeartbeat();
         if (fieldEngaged) emitFieldState();
     }
+
+    if (rp2350Run && !rp2350Flashing && rp2350Fails >= 3 && now - rp2350LastResetMs > rp2350RetryMs) rp2350Recover();
+}
+
+// End the match on every port: the period's timer ran out ("timer") or a
+// Smart port's own countdown got there first ("port"). The legacy ports
+// have no timer of their own, so this is what takes them down when the
+// host is gone.
+static void endPeriod(const char* reason) {
+    periodActive = false;
+    g_field_state = STATE_DISABLED;
+    if (legacyEnable) {
+        doLegacySet(false, "driver");
+        emitLegacyState();
+    }
+    showStatus(currentStatus());
+    sendFieldSetToRp2350();
+    JsonDocument d; d["evt"] = "bu_match_end"; d["reason"] = reason;
+    serializeJson(d, Serial); Serial.println();
+    emitFieldState();
 }
 
 // ─── Command dispatch ───
@@ -339,6 +445,11 @@ static void handleCommand(const JsonDocument& doc) {
 
     if (strcmp(cmd, "get_info") == 0) {
         emitHello();
+        if (fieldEngaged) emitFieldState();   // a reconnecting host sees any running period at once
+        if (periodActive) {
+            preambleUntilMs = millis() + RECONNECT_PREAMBLE_MS;
+            holdNextDisable = holdNextLegacyOff = true;
+        }
 
     } else if (strcmp(cmd, "ping") == 0) {
         lastHostPingMs = millis();  // feeds the field watchdog while enabled
@@ -349,7 +460,10 @@ static void handleCommand(const JsonDocument& doc) {
         bool on = doc["on"] | false;
         uint32_t now = millis();
         fieldEngaged = on;
+        g_field_interlock = doc["interlock"] | false;
         g_field_state = STATE_DISABLED;
+        periodActive = false;
+        showStatus(currentStatus());
         linkA.reset(now);
         linkB.reset(now);
         lastHostPingMs = now;
@@ -359,25 +473,54 @@ static void handleCommand(const JsonDocument& doc) {
     } else if (strcmp(cmd, "field_state") == 0) {
         if (!fieldEngaged) { emitError("not_engaged", "field_state"); return; }
         const char* st = doc["state"] | "disabled";
-        g_field_state = (strcmp(st, "driver") == 0) ? STATE_DRIVER
-                      : (strcmp(st, "auton") == 0)  ? STATE_AUTON
-                                                    : STATE_DISABLED;
-        lastHostPingMs = millis();
-        sendFieldSetToRp2350();
-        emitFieldState();
+        openfc_state_t next = (strcmp(st, "driver") == 0) ? STATE_DRIVER
+                            : (strcmp(st, "auton") == 0)  ? STATE_AUTON
+                                                          : STATE_DISABLED;
+        uint32_t now = millis();
+        bool held = holdNextDisable && next == STATE_DISABLED && inReconnectPreamble(now);
+        holdNextDisable = false;
+        lastHostPingMs = now;
+        if (held) {
+            emitFieldState("disabled");   // reconnect preamble: see above
+        } else {
+            if (next == STATE_DISABLED) {
+                periodActive = false;
+            } else if (!periodActive || next != g_field_state) {
+                // A new period. Re-sending the running state leaves it alone.
+                periodActive = true;
+                periodStartMs = now;
+                g_driver_period_ms = hostDriverMs;
+                g_auton_period_ms = hostAutonMs;
+                periodLengthMs = (next == STATE_DRIVER) ? g_driver_period_ms : g_auton_period_ms;
+            }
+            g_field_state = next;
+            showStatus(currentStatus());
+            sendFieldSetToRp2350();
+            emitFieldState();
+        }
 
     } else if (strcmp(cmd, "field_period") == 0) {
-        if (doc["driver"].is<int>()) g_driver_period_ms = (uint32_t)(int)doc["driver"];
-        if (doc["auton"].is<int>()) g_auton_period_ms = (uint32_t)(int)doc["auton"];
-        sendFieldSetToRp2350();
+        if (doc["driver"].is<int>()) hostDriverMs = (uint32_t)(int)doc["driver"];
+        if (doc["auton"].is<int>()) hostAutonMs = (uint32_t)(int)doc["auton"];
+        if (!periodActive) {
+            g_driver_period_ms = hostDriverMs;
+            g_auton_period_ms = hostAutonMs;
+            sendFieldSetToRp2350();
+        }
         emitFieldState();
 
+#if OPENFC_DEVTOOLS
+    } else if (devtoolsCommand(cmd, doc)) {
+        // capture, relay
+#endif
     } else if (strcmp(cmd, "legacy_set") == 0) {
         bool enable = doc["enable"] | false;
         const char* mode = doc["mode"] | "driver";
         String modeStr(mode);
         if (modeStr != "driver" && modeStr != "auto") modeStr = "driver";
-        doLegacySet(enable, modeStr);
+        bool held = holdNextLegacyOff && !enable && legacyEnable && inReconnectPreamble(millis());
+        holdNextLegacyOff = false;
+        if (!held) doLegacySet(enable, modeStr);   // held: reconnect preamble, see above
         JsonDocument ack; ack["evt"] = "ack"; ack["cmd"] = "legacy_set";
         serializeJson(ack, Serial); Serial.println();
         emitLegacyState();
@@ -453,7 +596,9 @@ static void handleCommand(const JsonDocument& doc) {
     } else if (strcmp(cmd, "rp2350_flash_begin") == 0) {
         uint32_t size = (uint32_t)(doc["size"] | 0);
         const char* fail = "";
+        rp2350Flashing = true;
         bool ok = size > 0 && swdFlashBegin(size, &fail);
+        if (!ok) rp2350Flashing = false;
         JsonDocument out;
         out["evt"] = "bu_flash_status";
         out["stage"] = "begin";
@@ -467,6 +612,7 @@ static void handleCommand(const JsonDocument& doc) {
         size_t n = b64Decode(b64, bin, sizeof(bin));
         const char* fail = "";
         bool ok = n > 0 && swdFlashData(bin, n, &fail);
+        if (!ok) rp2350Flashing = false;
         JsonDocument out;
         out["evt"] = "bu_flash_status";
         out["stage"] = "data";
@@ -479,6 +625,12 @@ static void handleCommand(const JsonDocument& doc) {
         const char* fail = "";
         bool ok = swdFlashEnd(&fail);
         rp2350Run = true;   // swdFlashEnd released RUN to boot the new image
+        rp2350Flashing = false;
+        rp2350Fails = 0;
+        if (ok && fieldEngaged) {
+            delay(300);
+            sendFieldSetToRp2350();
+        }
         JsonDocument out;
         out["evt"] = "bu_flash_status";
         out["stage"] = "end";
@@ -507,14 +659,18 @@ static void handleCommand(const JsonDocument& doc) {
 // ─── Legacy ports ───
 static void doLegacySet(bool enable, const String& mode) {
     bool autoMode = (mode == "auto");
-    digitalWrite(PIN_LEGACY_AD, (enable && autoMode) ? LEGACY_OPTO_ON : LEGACY_OPTO_OFF);
-    digitalWrite(PIN_LEGACY_ED, enable ? LEGACY_OPTO_OFF : LEGACY_OPTO_ON);
+    int ad = (enable && autoMode) ? LEGACY_OPTO_ON : LEGACY_OPTO_OFF;
+    int ed = enable ? LEGACY_OPTO_OFF : LEGACY_OPTO_ON;
+    showStatus(statusFor(fieldEngaged, g_field_state, ed, ad));
+    digitalWrite(PIN_LEGACY_AD, ad);
+    digitalWrite(PIN_LEGACY_ED, ed);
     legacyEnable = enable;
     legacyMode = mode;
     legacyDiag = false;
 }
 
 static void doLegacyRaw(bool ed, bool ad) {
+    showStatus(statusFor(fieldEngaged, g_field_state, ed ? HIGH : LOW, ad ? HIGH : LOW));
     digitalWrite(PIN_LEGACY_ED, ed ? HIGH : LOW);
     digitalWrite(PIN_LEGACY_AD, ad ? HIGH : LOW);
     legacyDiag = true;
@@ -924,6 +1080,7 @@ static bool spiRequestAndWait(SpiLinkCmd cmd, uint8_t port, uint8_t flags,
     uint8_t reqBuf[SPI_LINK_FRAME_LEN];
     uint8_t rxBuf[SPI_LINK_FRAME_LEN];
     spi_link_pack(req, reqBuf);
+    delay(1);   // let the slave finish the previous transaction and preload
     spiTransact(reqBuf, rxBuf);  // fire the request; MISO here is stale/ignored
 
     SpiLinkFrame poll = {};
@@ -936,41 +1093,83 @@ static bool spiRequestAndWait(SpiLinkCmd cmd, uint8_t port, uint8_t flags,
         delay(5);
         spiTransact(pollBuf, rxBuf);
         if (!spi_link_unpack(rxBuf, result)) continue;  // checksum garbage, retry
-        if (result->b0 != SPI_STATUS_PENDING) return true;
+        if (result->b0 != SPI_STATUS_PENDING) { rp2350Fails = 0; return true; }
     }
+    if (rp2350Fails < 255) rp2350Fails++;
     return false;
+}
+
+// Pulse RUN and re-send the field state. Clears the RP2350's capture ring
+// and its C/D capture mask, so the C/D capture is over after a reset.
+static void rp2350Recover() {
+    // Never block here: the A/B engines share this loop.
+    digitalWrite(PIN_RP2350_RUN, LOW);
+    delayMicroseconds(500);
+    digitalWrite(PIN_RP2350_RUN, HIGH);
+    rp2350Fails = 0;
+    rp2350Resets++;
+    rp2350LastResetMs = millis();
+    rp2350HoldoffUntilMs = rp2350LastResetMs + 300;
+    rp2350NeedFieldSet = true;
+    rp2350RetryMs = rp2350RetryMs >= 30000 ? 60000 : rp2350RetryMs * 2;
+#if OPENFC_DEVTOOLS
+    devtoolsOnRp2350Reset();
+#endif
+    JsonDocument d;
+    d["evt"] = "bu_rp2350_reset";
+    d["count"] = rp2350Resets;
+    serializeJson(d, Serial); Serial.println();
 }
 
 // Push the current field command to the RP2350. Payload layout must match
 // SPI_CMD_FIELD_SET's documented format in openfc_spi_link.h exactly.
 static void sendFieldSetToRp2350() {
-    uint8_t payload[10];
+    if (rp2350Flashing) return;
+    if (++rp2350FieldSeq == 0) rp2350FieldSeq = 1;   // 0 is the RP2350's "none applied"
+    uint8_t payload[12];
     payload[0] = fieldEngaged ? 1 : 0;
     payload[1] = (g_field_state == STATE_DRIVER) ? 1 : (g_field_state == STATE_AUTON) ? 2 : 0;
     memcpy(payload + 2, &g_driver_period_ms, 4);
     memcpy(payload + 6, &g_auton_period_ms, 4);
+    payload[10] = g_field_interlock ? 1 : 0;
+    payload[11] = rp2350FieldSeq;
     SpiLinkFrame result;
+    // Answered on the first poll (~6 ms); a short timeout keeps an absent
+    // RP2350 from stalling the A/B engines. An OK here doesn't prove the
+    // RP2350 applied it (a dropped request reads back the previous result);
+    // pollRp2350FieldStatus() checks the echoed seq and re-sends.
     rp2350Reachable = spiRequestAndWait(SPI_CMD_FIELD_SET, 0, 0, payload, sizeof(payload),
-                                        &result, 300) && result.b0 == SPI_STATUS_OK;
+                                        &result, 30) && result.b0 == SPI_STATUS_OK;
 }
 
 // Pull C/D status. Payload layout must match SPI_CMD_FIELD_STATUS's
 // documented format in openfc_spi_link.h exactly.
 static void pollRp2350FieldStatus() {
     SpiLinkFrame result;
-    bool ok = spiRequestAndWait(SPI_CMD_FIELD_STATUS, 0, 0, nullptr, 0, &result, 300) &&
+    bool ok = spiRequestAndWait(SPI_CMD_FIELD_STATUS, 0, 0, nullptr, 0, &result, 30) &&
               result.b0 == SPI_STATUS_OK && result.len >= 14;
     rp2350Reachable = ok;
     if (!ok) return;
+    rp2350RetryMs = 5000;
+    bool missedFieldSet = result.len >= 27 && result.payload[26] != rp2350FieldSeq;   // 26 bytes: RP2350 firmware without seq
+    if (rp2350NeedFieldSet || missedFieldSet) {
+        rp2350NeedFieldSet = false;
+        sendFieldSetToRp2350();
+    }
     const uint8_t* p = result.payload;
+    const size_t stride = result.len >= 26 ? 12 : 6;   // 6: RP2350 firmware without names
     Rp2350PortStatus* ports[2] = {&portC, &portD};
     for (int i = 0; i < 2; i++) {
-        const uint8_t* pp = p + 2 + i * 6;
+        const uint8_t* pp = p + 2 + i * stride;
         ports[i]->linkUp = pp[0] != 0;
         ports[i]->streamKind = pp[1];
         ports[i]->pollAckCount = (uint16_t)pp[2] | ((uint16_t)pp[3] << 8);
         ports[i]->linkAckCount = pp[4];
         ports[i]->swreplugCount = pp[5];
+        if (stride == 12) {
+            memcpy(ports[i]->robotName, pp + 6, 6);
+            ports[i]->robotName[6] = 0;
+        }
         ports[i]->haveStatus = true;
     }
 }
@@ -1038,6 +1237,34 @@ static void doRp2350Spi(const JsonDocument& doc) {
 }
 
 // ─── NeoPixel ───
+// Status LEDs: 0 red = Disabled, 1 amber = Autonomous, 2 green = Driver.
+static const uint8_t LED_DISABLED_RGB[3] = {96, 0, 0};
+static const uint8_t LED_AUTON_RGB[3]    = {96, 40, 0};
+static const uint8_t LED_DRIVER_RGB[3]   = {0, 96, 0};
+
+static StatusShown statusFor(bool engaged, openfc_state_t field, int edLevel, int adLevel) {
+    if (engaged && field == STATE_DRIVER) return StatusShown::Driver;
+    if (engaged && field == STATE_AUTON) return StatusShown::Auton;
+    if (edLevel == LEGACY_OPTO_ON) return StatusShown::Disabled;
+    return adLevel == LEGACY_OPTO_ON ? StatusShown::Auton : StatusShown::Driver;
+}
+
+static StatusShown currentStatus() {
+    return statusFor(fieldEngaged, g_field_state,
+                     digitalRead(PIN_LEGACY_ED), digitalRead(PIN_LEGACY_AD));
+}
+
+static void showStatus(StatusShown s) {
+    if (identifying || s == ledsShown) return;
+    ledsShown = s;
+    auto color = [](const uint8_t* rgb) { return pixels.Color(rgb[0], rgb[1], rgb[2], 0); };
+    pixels.clear();
+    if (s == StatusShown::Disabled) pixels.setPixelColor(0, color(LED_DISABLED_RGB));
+    if (s == StatusShown::Auton)    pixels.setPixelColor(1, color(LED_AUTON_RGB));
+    if (s == StatusShown::Driver)   pixels.setPixelColor(2, color(LED_DRIVER_RGB));
+    pixels.show();
+}
+
 static void doLedSet(const JsonDocument& doc) {
     int index = doc["index"] | -1;
     if (index < 0 || index >= NEOPIXEL_COUNT) { emitError("invalid_index", "led_set"); return; }
@@ -1058,6 +1285,8 @@ static void emitHello() {
     doc["fw_version"] = OPENFC_FW_VERSION;
     doc["hw_version"] = OPENFC_HW_VERSION;
     doc["device_id"] = getDeviceId();
+    doc["leds"] = "field";
+    doc["devtools"] = (bool)OPENFC_DEVTOOLS;
     serializeJson(doc, Serial); Serial.println();
 }
 
@@ -1089,17 +1318,25 @@ static void emitHeartbeat() {
     doc["btn1"] = digitalRead(PIN_BTN1) == LOW;
     doc["btn2"] = digitalRead(PIN_BTN2) == LOW;
     doc["rp2350_irq"] = digitalRead(PIN_RP2350_IRQ) == HIGH;
+    doc["rp2350"] = rp2350Reachable;
+    doc["rp2350_resets"] = rp2350Resets;
     serializeJson(doc, Serial); Serial.println();
 }
 
-static void emitFieldState() {
+static void emitFieldState(const char* heldState) {
     uint32_t now = millis();
     JsonDocument doc;
     doc["evt"] = "bu_field";
     doc["engaged"] = fieldEngaged;
-    doc["state"] = fieldStateName(g_field_state);
-    doc["driver_ms"] = (int)g_driver_period_ms;
-    doc["auton_ms"] = (int)g_auton_period_ms;
+    doc["state"] = heldState ? heldState : fieldStateName(g_field_state);
+    if (heldState) doc["held"] = true;
+    doc["driver_ms"] = (int)hostDriverMs;
+    doc["auton_ms"] = (int)hostAutonMs;
+    doc["interlock"] = g_field_interlock;
+    // The running period, for a host that reconnects mid-match.
+    uint32_t elapsed = now - periodStartMs;
+    doc["timed"] = periodActive;
+    doc["remaining_ms"] = (int)(periodActive && elapsed < periodLengthMs ? periodLengthMs - elapsed : 0);
     JsonArray ports = doc["ports"].to<JsonArray>();
     for (SmartLink* l : {&linkA, &linkB}) {
         JsonObject p = ports.add<JsonObject>();
@@ -1130,6 +1367,9 @@ static void emitFieldState() {
             p["link"] = rpPorts[i]->linkUp;
             p["ctrl"] = rpPorts[i]->linkUp || rpPorts[i]->streamKind > 0;
             p["fm"] = rpPorts[i]->streamKind;
+            if (rpPorts[i]->streamKind == 2 && rpPorts[i]->robotName[0]) {
+                p["robot"] = (const char*)rpPorts[i]->robotName;
+            }
             p["lack"] = (int)rpPorts[i]->linkAckCount;
             p["sack"] = 0;   // not tracked over this link's compact status frame
             p["pack"] = (int)rpPorts[i]->pollAckCount;
@@ -1140,6 +1380,15 @@ static void emitFieldState() {
     doc["rp2350"] = rp2350Reachable;
     serializeJson(doc, Serial);
     Serial.println();
+}
+
+// ─── Services for devtools.cpp ───
+bool mainFieldEngaged() { return fieldEngaged; }
+bool mainRp2350Run() { return rp2350Run; }
+void mainEmitError(const char* reason, const char* cmd) { emitError(reason, cmd); }
+bool mainSpiRequest(uint8_t cmd, const uint8_t* payload, uint8_t len, SpiLinkFrame* result,
+                    uint32_t timeoutMs) {
+    return spiRequestAndWait((SpiLinkCmd)cmd, 0, 0, payload, len, result, timeoutMs);
 }
 
 static void emitError(const char* reason, const char* cmd) {

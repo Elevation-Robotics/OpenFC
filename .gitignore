@@ -37,3 +37,6 @@ firmware/.pio/
 
 # public API, generated from public/firmware/manifest.json at build time
 /public/api/
+
+# Python
+__pycache__/

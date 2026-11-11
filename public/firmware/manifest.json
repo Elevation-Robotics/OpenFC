@@ -36,6 +36,54 @@
   ],
   "v13_releases": [
     {
+      "version": "0.1.6-bringup",
+      "released": "2026-11-10",
+      "description": "Keeps the match period running when the host drops, and rides through a Competition Control reconnect",
+      "changelog": "Release build (no bus capture or relay). Driver and auton now start a timed period on the board. If the host goes away mid-period the robots keep their state, instead of dropping to Disabled after 2.5 s, and the board ends the period on its own timer, disabling every port including the legacy ports (bu_match_end, reason timer). bu_field reports timed and remaining_ms for a host that reconnects. Competition Control's reconnect, which disables before it looks at its match, no longer blips the robots: while a period runs, the first disable and legacy-off within 1 s of get_info are answered but held, and a second disable (the match was stopped) applies at once. field_period sent mid-period applies to the next period. Only the ESP32 image changed; the RP2350 image is the same as 0.1.5. Bench-tested with a robot on a legacy port through a host outage and a simulated Competition Control reconnect; not yet tested with the Competition Control app or with controllers on the Smart ports.",
+      "esp32": {
+        "download_url": "/firmware/openfc-v13-esp32-0.1.6-bringup-merged.bin",
+        "sha256": "29cabd04fecf3c0c7fc2b77a7327fcf0177efd5db9ea4946405613945210b588",
+        "size": 391360
+      },
+      "rp2350": {
+        "download_url": "/firmware/openfc-v13-rp2350-0.1.6-bringup.bin",
+        "sha256": "b985418783e5527a3517700bd0c6036e7c6068415cd4ed1cebaba06422859c84",
+        "size": 52496
+      }
+    },
+    {
+      "version": "0.1.5-bringup",
+      "released": "2026-10-20",
+      "description": "Fixes Smart ports C/D staying disabled after a state change",
+      "changelog": "Release build (no bus capture or relay). A field-state change the RP2350 missed on the SPI link went unnoticed: the ESP32 read back the previous OK result, so ports C/D stayed in the old state, usually Disabled, until the next change. Each field set now carries a sequence number that the RP2350 reports back in its status, and the ESP32 re-sends the state when they differ, so a missed change is corrected within 200 ms. After the RP2350's link watchdog disables the field, the state is restored once the link is back. Flash both MCUs from this release. NOT YET BENCH-TESTED: built from the fix, awaiting a C/D state walk on hardware.",
+      "esp32": {
+        "download_url": "/firmware/openfc-v13-esp32-0.1.5-bringup-merged.bin",
+        "sha256": "ff7be33aa9f41069465f91f6862b98189c367c283bbeb739dc6dbdf71be8083e",
+        "size": 390688
+      },
+      "rp2350": {
+        "download_url": "/firmware/openfc-v13-rp2350-0.1.5-bringup.bin",
+        "sha256": "b985418783e5527a3517700bd0c6036e7c6068415cd4ed1cebaba06422859c84",
+        "size": 52496
+      }
+    },
+    {
+      "version": "0.1.4-bringup",
+      "released": "2026-09-27",
+      "description": "Smart-port field control rebuilt from a real field controller; board-driven status LEDs",
+      "changelog": "Release build (no bus capture or relay). The Smart-port engines on both MCUs now answer the controller exactly as a VEX field controller does, so controllers reach field mode and show Disabled/Driver/Auton with no robot linked; the state frame is re-sent until the controller echoes it. Both MCUs boot engaged and Disabled and the RP2350 is released at boot, so a controller on any Smart port shows Disabled with no host. The board paints the status LEDs (red disabled, amber auton, green driver) and reports robot names on all four ports. Fixes: SPI timeouts and non-blocking RP2350 recovery keep ports A/B responsive, RP2350 flashing works while engaged, and a flash chunk that arrives short is rejected. Works with the practice match page, which drives the Smart ports and the legacy ports together.",
+      "esp32": {
+        "download_url": "/firmware/openfc-v13-esp32-0.1.4-bringup-merged.bin",
+        "sha256": "cfca6fe14f30b9e3e12f7b109a67e0f56f90a8f0945577988c6ba875c0ffccb8",
+        "size": 390544
+      },
+      "rp2350": {
+        "download_url": "/firmware/openfc-v13-rp2350-0.1.4-bringup.bin",
+        "sha256": "45777852972aacd4b4c1035a55a3f946b3fb795178682885f06b4b1fb448de2f",
+        "size": 52456
+      }
+    },
+    {
       "version": "0.1.0-bringup",
       "released": "2026-09-08",
       "description": "V1.3 dual-MCU bring-up firmware: ESP32-S3 host plus RP2350 Smart-port expander",

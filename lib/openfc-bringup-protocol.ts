@@ -24,6 +24,10 @@ export interface BringupHello {
   fw_version: string;
   hw_version: string;
   device_id: string;
+  /** Present when the firmware paints its own status LEDs from the field state. */
+  leds?: 'field';
+  /** From 0.1.4: true on bench builds with bus capture and the relay; false on release builds. */
+  devtools?: boolean;
 }
 
 export interface BringupState {
@@ -33,6 +37,16 @@ export interface BringupState {
   btn1: boolean;
   btn2: boolean;
   rp2350_irq: boolean;
+  /** From 0.1.2: whether the last SPI exchange with the RP2350 succeeded. */
+  rp2350?: boolean;
+  /** From 0.1.2: how many times the ESP32 has pulsed RUN after the RP2350 stopped answering. */
+  rp2350_resets?: number;
+}
+
+/** The ESP32 reset the RP2350 after three consecutive failed SPI requests. */
+export interface BringupRp2350Reset {
+  evt: 'bu_rp2350_reset';
+  count: number;
 }
 
 export interface BringupLegacyState {
@@ -138,7 +152,50 @@ export interface BringupFieldState {
   state: FieldState;
   driver_ms: number;
   auton_ms: number;
+  /** From 0.1.2: true when driver/auton are held until the controller is in A7 field mode. */
+  interlock?: boolean;
+  /** From 0.1.6: a timed period is running on the board. */
+  timed?: boolean;
+  /** From 0.1.6: ms left in the running period, 0 when none. */
+  remaining_ms?: number;
+  /**
+   * From 0.1.6: this reply is to a disable the board held because it came
+   * just after a reconnect's get_info while a period runs; `state` is the
+   * command, not the outputs. The next bu_field reports the real state.
+   */
+  held?: boolean;
   ports: BringupFieldPort[];
+}
+
+/** One bus record from a capture: bytes the port engine read (`rx`) or wrote (`tx`). */
+export interface BringupCap {
+  evt: 'bu_cap';
+  p: SmartPort;
+  d: 'rx' | 'tx';
+  /** Microseconds on the MCU that owns the port (A/B the ESP32, C/D the RP2350); wraps at 2^32. */
+  t: number;
+  /** The bytes as uppercase hex, no separators. */
+  h: string;
+}
+
+export interface BringupCapRing {
+  used: number;
+  size: number;
+  dropped: number;
+  records: number;
+}
+
+export interface BringupCapStatus {
+  evt: 'bu_cap_status';
+  recording: boolean;
+  stream: boolean;
+  /** Ports being recorded, e.g. "ABCD". */
+  ports: string;
+  ab: BringupCapRing;
+  /** Absent when the RP2350 is not answering. */
+  cd?: BringupCapRing;
+  /** Set on the status that ends a dump. */
+  done?: boolean;
 }
 
 export interface BringupAck {
@@ -164,6 +221,9 @@ export type BringupEvent =
   | BringupSpiResult
   | BringupSwdProbe
   | BringupFlashStatus
+  | BringupCap
+  | BringupCapStatus
+  | BringupRp2350Reset
   | BringupAck
   | BringupError;
 
@@ -189,6 +249,9 @@ export function isBringupEvent(evt: { evt: string }): boolean {
     evt.evt === 'bu_spi_result' ||
     evt.evt === 'bu_swd_probe' ||
     evt.evt === 'bu_flash_status' ||
+    evt.evt === 'bu_cap' ||
+    evt.evt === 'bu_cap_status' ||
+    evt.evt === 'bu_rp2350_reset' ||
     evt.evt === 'bu_error' ||
     evt.evt === 'ack'
   );
@@ -265,16 +328,49 @@ export const bringupCmd = {
   /**
    * Field control (the real ported OpenFC-Smart engine, ports A+B in
    * unison). While engaged the engines own the buses — raw port
-   * diagnostics are refused with `field_engaged`. The firmware drops
-   * driver/auton back to disabled if pings stop for 2.5 s, so the panel
-   * must ping every ~1 s while a state is commanded.
+   * diagnostics are refused with `field_engaged`. Outside a timed period
+   * the firmware drops driver/auton back to disabled if pings stop for
+   * 2.5 s, so the panel must ping every ~1 s while engaged. From 0.1.6
+   * driver/auton start a timed period that keeps running without pings
+   * and ends on the board.
    */
-  fieldEngage: (on: boolean): string =>
-    JSON.stringify({ cmd: 'field_engage', on }),
+  /**
+   * From 0.1.4 the engine streams the commanded state to any linked
+   * controller. `interlock:true` instead holds driver/auton (streaming
+   * Disabled) until the controller is in A7 field mode.
+   */
+  fieldEngage: (on: boolean, interlock = false): string =>
+    JSON.stringify({ cmd: 'field_engage', on, interlock }),
   fieldState: (state: FieldState): string =>
     JSON.stringify({ cmd: 'field_state', state }),
   fieldPeriod: (driverMs: number, autonMs: number): string =>
     JSON.stringify({ cmd: 'field_period', driver: driverMs, auton: autonMs }),
+  /**
+   * Bus capture. `on:true` clears the rings and records every byte both
+   * ways on the listed ports (all four by default): A/B on the ESP32
+   * (128 KB, about 25 s of one port in session), C/D on the RP2350
+   * (256 KB). Records are held until a dump;
+   * `stream` also sends A/B live as far as the serial link keeps up, and
+   * what it cannot carry stays in the ring. There is only something to
+   * record while the field is engaged.
+   */
+  capture: (ports: SmartPort[], on: boolean, stream = false): string =>
+    JSON.stringify({ cmd: 'capture', ports, on, stream }),
+  /**
+   * Stop recording and send everything held: one `bu_cap` per record, then
+   * `bu_cap_status` with `done:true`. C/D come out only while the field is
+   * disengaged (the SPI transfer stalls the engines); otherwise they stay
+   * held on the RP2350 for a later dump.
+   */
+  captureDump: (): string => JSON.stringify({ cmd: 'capture', dump: true }),
+  captureStatus: (): string => JSON.stringify({ cmd: 'capture' }),
+  /**
+   * Pass bytes between ports A and B for `ms` (max 120000) and record them,
+   * for sitting between a real field controller and a V5 controller. The
+   * board sends nothing else until `bu_relay_result`; then `captureDump`.
+   */
+  relay: (ms: number, holdUs = 40): string =>
+    JSON.stringify({ cmd: 'relay', ms, hold_us: holdUs }),
 };
 
 /** Bytes-as-hex-string helper for the raw send/receive log UI. */

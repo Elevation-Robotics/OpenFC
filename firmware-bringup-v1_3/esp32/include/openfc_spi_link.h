@@ -75,12 +75,26 @@ enum SpiLinkCmd : uint8_t {
     // Field control (the SmartLink engines run ON the RP2350 for C/D; the
     // ESP32 just proxies commands/status over this link):
     // FIELD_SET payload: [0]=engaged, [1]=state (0 disabled/1 driver/2
-    // auton), [2..5]=driver_ms LE32, [6..9]=auton_ms LE32. Answered
-    // immediately (no PENDING).
+    // auton), [2..5]=driver_ms LE32, [6..9]=auton_ms LE32, [10]=interlock
+    // (1 = hold driver/auton until A7 field mode, 0 = stream the commanded
+    // state to any linked controller; absent = 0), [11]=seq (1..255; absent
+    // = 0). Answered immediately.
     SPI_CMD_FIELD_SET    = 0x06,
-    // FIELD_STATUS response payload, per port C then D, 6 bytes each:
-    // [link, fm, pack&0xFF, (pack>>8)&0xFF, lack&0xFF, swreplug&0xFF].
+    // FIELD_STATUS response payload: [engaged, state], then per port C and
+    // D, 12 bytes each: [link, fm, pack&0xFF, (pack>>8)&0xFF, lack&0xFF,
+    // swreplug&0xFF, robot name (6 bytes, NUL padded)], then [26]=seq of the
+    // last FIELD_SET applied (0 after boot or after the link watchdog
+    // disabled the field). A seq that differs from the last one sent means
+    // the RP2350 missed a FIELD_SET: a request it drops is invisible to the
+    // master, whose next poll reads the previous OK result.
     SPI_CMD_FIELD_STATUS = 0x07,
+    // CAPTURE request payload: [0]=op (0 stop, 1 start and clear, 2 status),
+    // [1]=port mask (bit0 C, bit1 D). Result payload: used, size, dropped,
+    // records (LE32 each), [16]=recording, [17]=mask.
+    SPI_CMD_CAPTURE      = 0x08,
+    // CAPTURE_READ: result payload = next <=32 bytes of the ring's record
+    // stream (openfc_capture.h), consumed; result flags bit0 = more remain.
+    SPI_CMD_CAPTURE_READ = 0x09,
 };
 
 enum SpiLinkStatus : uint8_t {

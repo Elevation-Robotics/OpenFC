@@ -29,6 +29,31 @@ function VerificationBadge({ status }: { status: VerificationStatus | null }) {
   );
 }
 
+// V1.3 boards: which Smart ports have a controller, and the robot name it
+// reports (free text set by the team, usually the team number).
+function SmartPorts({ ports }: { ports: { port: string; link: boolean; fm: number; robot?: string }[] }) {
+  const linked = ports.filter((p) => p.link);
+  if (linked.length === 0) {
+    return <span className="text-gray-500">no controllers on the Smart ports</span>;
+  }
+  return (
+    <span className="inline-flex flex-wrap gap-2">
+      {linked.map((p) => (
+        <span
+          key={p.port}
+          className={`rounded px-1.5 py-0.5 font-mono ${
+            p.fm === 2 ? 'bg-green-900/50 text-green-300' : 'bg-yellow-900/50 text-yellow-300'
+          }`}
+          title={p.fm === 2 ? 'Controller in field mode' : 'Linked, not in field mode'}
+        >
+          {p.port}
+          {p.robot ? ` ${p.robot}` : ''}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export default function DeviceStatus() {
   const { state, reconnect } = useSerial();
 
@@ -69,7 +94,14 @@ export default function DeviceStatus() {
       <span className="font-mono">{state.deviceId ?? 'openfc'}</span>
       <span className="text-gray-500">{state.boardState ?? '—'}</span>
       {state.fwVersion && <span className="text-gray-500">v{state.fwVersion}</span>}
-      <VerificationBadge status={state.verification} />
+      {state.boardKind === 'v13' ? (
+        <>
+          <span className="rounded bg-blue-900/50 px-1.5 py-0.5 text-blue-300">V1.3 bring-up</span>
+          {state.smartPorts && <SmartPorts ports={state.smartPorts} />}
+        </>
+      ) : (
+        <VerificationBadge status={state.verification} />
+      )}
     </span>
   );
 }

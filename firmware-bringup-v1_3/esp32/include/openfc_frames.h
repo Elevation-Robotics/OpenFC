@@ -124,6 +124,22 @@ static const uint8_t ACK_A7[FRAME_SIZE] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xB8, 0x0C
 };
 
+// Field-controller replies, verbatim from a relay recording of a VEX field
+// controller and a V5 controller (2026-09-27). The controller leads every
+// exchange; the field controller answers each frame once:
+//   0A 4B announce -> FC_REPLY1         13 20 (controller ID) -> FC_SESSION_ACK
+//   11 request     -> ENUM_04           02 04 / 02 54         -> 02 02 ack
+//   first A7       -> 54 (byte3 = 00)   A3                    -> 02 A3 ack
+//   later A7/A0    -> 53 state, or 02 A7 ack
+static const uint8_t FC_REPLY1[LINK16_SIZE] = {
+    0x03, 0x0A, 0x64, 0x00, 0x00, 0x00, 0x00, 0xBA,
+    0x00, 0x9D, 0x68, 0x5E, 0x00, 0x00, 0x84, 0x75
+};
+static const uint8_t FC_SESSION_ACK[LINK16_SIZE] = {
+    0x02, 0x13, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xF3, 0x78
+};
+
 // Byte positions
 #define POS_ENABLE 3
 #define POS_MODE 6
@@ -179,6 +195,19 @@ inline void build_link_reply2(const uint8_t *poll, uint8_t out[LINK16_SIZE]) {
     uint16_t crc = crc16_ccitt_false(out, LINK16_CRC_COV);
     out[14] = (crc >> 8) & 0xFF;
     out[15] = crc & 0xFF;
+}
+
+/** Build the field controller's 32-byte "02 xx 01" acknowledgement of a
+ * controller frame of type xx (02 02, 02 A3, 02 A7 in the recording). */
+inline void build_fc_ack(uint8_t kind, uint8_t out[FRAME_SIZE]) {
+    memset(out, 0, FRAME_SIZE);
+    out[0] = 0x02;
+    out[1] = kind;
+    out[2] = 0x01;
+    out[10] = 0x01;
+    uint16_t crc = crc16_ccitt_false(out, CRC_START_INDEX);
+    out[30] = (crc >> 8) & 0xFF;
+    out[31] = crc & 0xFF;
 }
 
 /** Build a 0x53 match-state frame (disabled/driver/auton).
